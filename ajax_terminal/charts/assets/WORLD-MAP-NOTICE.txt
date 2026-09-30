@@ -1,0 +1,5 @@
+The bundled world.json file is sourced from the Apache ECharts repository:
+https://github.com/apache/echarts/blob/master/test/data/map/json/world.json
+
+Apache ECharts is licensed under the Apache License, Version 2.0. The existing
+ECHARTS-LICENSE.txt file in this directory contains the applicable license text.

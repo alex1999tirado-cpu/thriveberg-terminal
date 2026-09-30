@@ -1,0 +1,2748 @@
+from __future__ import annotations
+
+import asyncio
+import ast
+import html
+import importlib.util
+import re
+import sys
+import urllib.parse
+from collections.abc import Callable
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+from PySide6.QtCore import QByteArray, QEvent, QPoint, QSettings, QThread, QTimer, Qt, Signal, Slot
+from PySide6.QtGui import QColor, QFont, QFontDatabase, QKeySequence, QShortcut
+from PySide6.QtSvgWidgets import QSvgWidget
+from PySide6.QtWidgets import (
+    QAbstractItemView,
+    QApplication,
+    QButtonGroup,
+    QDialog,
+    QFrame,
+    QGridLayout,
+    QHeaderView,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QMainWindow,
+    QMenu,
+    QPushButton,
+    QSizePolicy,
+    QStackedWidget,
+    QStyle,
+    QTableWidget,
+    QTableWidgetItem,
+    QTabWidget,
+    QVBoxLayout,
+    QWidget,
+)
+
+from ajax_terminal import __version__
+from ajax_terminal.charts.launcher import (
+    ChartRuntimeError,
+    launch_curve_chart,
+    launch_price_chart,
+    launch_volatility_surface,
+)
+from ajax_terminal.charts.qt_app import _load_curve, _load_price, _load_surface
+from ajax_terminal.charts.qt_windows import CurveWindow, PriceChartWindow
+from ajax_terminal.charts.ovdv_window import VolatilitySurfaceWorkspace
+from ajax_terminal.charts.theme import AJAX_AMBER, AJAX_MUTED, AJAX_RED, AJAX_TEXT, qt_stylesheet
+from ajax_terminal.classic_embed import ClassicAction, ClassicSnapshot, render_classic_snapshot
+from ajax_terminal.desktop_security import open_external_url, open_local_path
+from ajax_terminal.fundamentals_desktop import (
+    FinancialAnalysisWorkspace,
+    FinancialExportWorkspace,
+    FinancialStatementsWorkspace,
+    SecurityDescriptionWorkspace,
+    export_financial_statements,
+    load_financial_analysis,
+    load_financial_statement,
+    load_security_description,
+)
+from ajax_terminal.equity_research_desktop import (
+    AnalystWorkspace,
+    DividendsWorkspace,
+    EstimatesWorkspace,
+    EventsWorkspace,
+    FilingsWorkspace,
+    RelativeValuationWorkspace,
+    ResearchLoad,
+    ScreenerWorkspace,
+    load_analyst_consensus,
+    load_dividends,
+    load_estimates,
+    load_events,
+    load_filings,
+    load_relative_valuation,
+    load_screener,
+)
+from ajax_terminal.models.quote import StatementType
+from ajax_terminal.macro_map_desktop import MacroMapLoad, MacroMapWorkspace, load_macro_map
+from ajax_terminal.options_desktop import (
+    OptionsDesktopLoad,
+    OptionsDesktopWorkspace,
+    load_option_monitor,
+    load_option_valuation,
+)
+from ajax_terminal.services.market_service import MarketService
+from ajax_terminal.services.news_service import NewsService
+from ajax_terminal.services.options_service import resolve_option_underlying_symbol
+from ajax_terminal.services.social_service import SocialService
+from ajax_terminal.secure_settings import SecureSettings, SecureSettingsError
+from ajax_terminal.services.workstation_service import (
+    load_alerts,
+    load_data_audit,
+    load_event_calendar,
+    load_portfolio,
+    load_watchlist,
+    scan_beta_releases,
+)
+from ajax_terminal.social_desktop import AsyncOperation, SocialDesktopWorkspace
+from ajax_terminal.startup import StartupManager, StartupStage
+from ajax_terminal.startup_splash import StartupSplash, thriveberg_icon
+from ajax_terminal.storage.database import get_connection
+from ajax_terminal.storage.workstation import WorkspaceSnapshot, WorkspaceStore
+from ajax_terminal.ui.commands.parser import SECURITY_FUNCTIONS, CommandAction, parse_command
+from ajax_terminal.ui.suggestions import (
+    COMMANDS,
+    SYMBOL_FUNCTIONS,
+    SecuritySuggestion,
+    command_suggestions,
+    security_search_context,
+    security_suggestions,
+)
+from ajax_terminal.utils.periods import normalize_history_interval, normalize_history_period
+from ajax_terminal.workstation_desktop import (
+    AlertsWorkspace,
+    DataAuditWorkspace,
+    EventCalendarWorkspace,
+    PortfolioWorkspace,
+    UpdateWorkspace,
+    WatchlistWorkspace,
+    WorkspaceManagerWorkspace,
+    restore_workspace_geometry,
+)
+
+
+_SYMBOL_RE = re.compile(r"^[A-Z0-9][A-Z0-9.=_^-]{0,24}$")
+
+_SECURITY_ROUTE_KINDS = {
+    "price",
+    "ovdv",
+    "option-monitor",
+    "option-valuation",
+    "select",
+    "description",
+    "financial-analysis",
+    "financial-income",
+    "financial-balance",
+    "financial-cashflow",
+    "financial-export",
+    "relative-valuation",
+    "estimates",
+    "analyst",
+    "dividends",
+    "events",
+    "filings",
+    "filings-10k",
+    "filings-10q",
+    "data-audit",
+}
+
+
+@dataclass(frozen=True, slots=True)
+class DesktopRoute:
+    kind: str
+    target: str
+    period: str | None = None
+    interval: str | None = None
+    raw: str = ""
+
+
+def resolve_desktop_command(raw: str, current_symbol: str = "") -> DesktopRoute:
+    clean = " ".join(raw.strip().upper().split())
+    parsed = parse_command(clean)
+    if not clean or parsed.action == CommandAction.HOME:
+        return DesktopRoute("home", current_symbol, raw=clean or "HOME")
+    if (
+        parsed.action in SECURITY_FUNCTIONS
+        and parsed.action not in {CommandAction.FX, CommandAction.FWD, CommandAction.NEWS, CommandAction.EVENTS}
+        and not (parsed.target or current_symbol)
+    ):
+        return DesktopRoute("security-required", "", raw=clean)
+    if parsed.action in {CommandAction.SEARCH, CommandAction.UNKNOWN} and len(clean.split()) == 1:
+        if _SYMBOL_RE.fullmatch(clean):
+            return DesktopRoute("select", clean, raw=clean)
+    if parsed.action == CommandAction.CHART:
+        target = parsed.target or current_symbol
+        period = normalize_history_period(parsed.args[1] if len(parsed.args) > 1 else "1Y")
+        interval = normalize_history_interval(period, parsed.args[2] if len(parsed.args) > 2 else None)
+        return DesktopRoute("price", target, period, interval, clean)
+    if parsed.action == CommandAction.RISK:
+        return DesktopRoute("price", parsed.target or current_symbol, "1Y", "1d", clean)
+    if parsed.action == CommandAction.VOL:
+        return DesktopRoute("ovdv", _option_route_target(parsed.target or current_symbol), raw=clean)
+    if parsed.action == CommandAction.OPTIONS:
+        return DesktopRoute(
+            "option-monitor",
+            _option_route_target(parsed.target or current_symbol),
+            raw=clean,
+        )
+    if parsed.action == CommandAction.OPTION_VALUATION:
+        return DesktopRoute(
+            "option-valuation",
+            _option_route_target(parsed.target or current_symbol),
+            raw=clean,
+        )
+    if parsed.action == CommandAction.CURVE:
+        return DesktopRoute("curve", parsed.target or "USD", raw=clean)
+    if parsed.action == CommandAction.MAP:
+        return DesktopRoute("macro-map", parsed.target or "WORLD", raw=clean)
+    if parsed.action == CommandAction.SOCIAL:
+        return DesktopRoute("social", current_symbol, raw=clean)
+    if parsed.action == CommandAction.WATCH:
+        return DesktopRoute("watchlist", "", raw=clean)
+    if parsed.action == CommandAction.PORTFOLIO:
+        return DesktopRoute("portfolio", "", raw=clean)
+    if parsed.action == CommandAction.ALERTS:
+        return DesktopRoute("alerts", "", raw=clean)
+    if parsed.action == CommandAction.WORKSPACES:
+        return DesktopRoute("workspaces", "", raw=clean)
+    if parsed.action == CommandAction.UPDATES:
+        return DesktopRoute("updates", "", raw=clean)
+    if parsed.action in {CommandAction.INSTRUMENT, CommandAction.EQUITY}:
+        return DesktopRoute("description", parsed.target or current_symbol, raw=clean)
+    if parsed.action == CommandAction.DATA_AUDIT:
+        return DesktopRoute("data-audit", parsed.target or current_symbol, raw=clean)
+    if parsed.action == CommandAction.FINANCIAL_ANALYSIS:
+        return DesktopRoute("financial-analysis", parsed.target or current_symbol, raw=clean)
+    research_actions = {
+        CommandAction.RELATIVE_VALUATION: "relative-valuation",
+        CommandAction.COMP: "relative-valuation",
+        CommandAction.ESTIMATES: "estimates",
+        CommandAction.ANALYST: "analyst",
+        CommandAction.DIVIDENDS: "dividends",
+        CommandAction.FILINGS: "filings",
+        CommandAction.TEN_K: "filings-10k",
+        CommandAction.TEN_Q: "filings-10q",
+    }
+    if parsed.action in research_actions:
+        return DesktopRoute(research_actions[parsed.action], parsed.target or current_symbol, raw=clean)
+    if parsed.action == CommandAction.EVENTS:
+        target = parsed.target or current_symbol
+        calendar_target = bool(
+            not target
+            or target in {"ALL", "WATCHLIST", "PORTFOLIO"}
+            or target.startswith(("WATC:", "PORT:"))
+        )
+        if calendar_target:
+            days = parsed.args[1] if len(parsed.args) > 1 else "30"
+            page = parsed.args[2] if len(parsed.args) > 2 else "1"
+            calendar_scope = target or "ALL"
+            if calendar_scope == "WATCHLIST":
+                calendar_scope = "WATC:DEFAULT"
+            elif calendar_scope == "PORTFOLIO":
+                calendar_scope = "PORT:MAIN"
+            return DesktopRoute(
+                "event-calendar",
+                calendar_scope,
+                period=days,
+                interval=page,
+                raw=clean or "EVT ALL 30 1",
+            )
+        return DesktopRoute("events", target, raw=clean)
+    if parsed.action == CommandAction.SCREENER:
+        return DesktopRoute("screener", current_symbol, raw=clean)
+    statement_actions = {
+        CommandAction.INCOME_STATEMENT: "income",
+        CommandAction.BALANCE_SHEET: "balance",
+        CommandAction.CASH_FLOW: "cashflow",
+    }
+    if parsed.action in statement_actions:
+        return DesktopRoute(
+            f"financial-{statement_actions[parsed.action]}",
+            parsed.target or current_symbol,
+            raw=clean,
+        )
+    if parsed.action == CommandAction.EXPORT:
+        return DesktopRoute("financial-export", parsed.target or current_symbol, raw=clean)
+    return DesktopRoute("terminal", parsed.target or current_symbol, raw=clean)
+
+
+def _option_route_target(symbol: str) -> str:
+    try:
+        return resolve_option_underlying_symbol(symbol)
+    except ValueError:
+        return symbol
+
+
+class _Loader(QThread):
+    loaded = Signal(object)
+    failed = Signal(str)
+
+    def __init__(self, loader: Callable[[], Any]) -> None:
+        super().__init__()
+        self.loader = loader
+
+    def run(self) -> None:
+        try:
+            self.loaded.emit(self.loader())
+        except Exception as exc:
+            self.failed.emit(str(exc))
+
+
+class _InteractiveSvgWidget(QSvgWidget):
+    action_triggered = Signal(str)
+
+    def __init__(
+        self,
+        actions: tuple[ClassicAction, ...],
+        columns: int,
+        rows: int,
+    ) -> None:
+        super().__init__()
+        self._actions = actions
+        self._columns = max(columns, 1)
+        self._rows = max(rows, 1)
+        self.setMouseTracking(True)
+
+    def _action_at(self, position) -> str | None:
+        if self.width() <= 0 or self.height() <= 0:
+            return None
+        column = int(position.x() * self._columns / self.width())
+        row = int(position.y() * self._rows / self.height())
+        return next(
+            (
+                item.action
+                for item in self._actions
+                if item.row == row and item.column_start <= column < item.column_end
+            ),
+            None,
+        )
+
+    def mouseMoveEvent(self, event) -> None:  # noqa: N802 - Qt callback
+        cursor = Qt.CursorShape.PointingHandCursor if self._action_at(event.position()) else Qt.CursorShape.ArrowCursor
+        self.setCursor(cursor)
+        super().mouseMoveEvent(event)
+
+    def mousePressEvent(self, event) -> None:  # noqa: N802 - Qt callback
+        action = self._action_at(event.position())
+        if action:
+            if event.button() == Qt.MouseButton.LeftButton:
+                self.action_triggered.emit(action)
+                event.accept()
+                return
+            if event.button() == Qt.MouseButton.RightButton and action.startswith("app.open_methodology("):
+                menu = QMenu(self)
+                selected = menu.addAction("OPEN METHODOLOGY")
+                if menu.exec(event.globalPosition().toPoint()) == selected:
+                    self.action_triggered.emit(action)
+                event.accept()
+                return
+        super().mousePressEvent(event)
+
+
+@dataclass(frozen=True, slots=True)
+class _FunctionEntry:
+    code: str
+    description: str
+    command: str
+
+
+class _FunctionMenuRow(QFrame):
+    triggered = Signal(str)
+
+    def __init__(self, number: int, entry: _FunctionEntry) -> None:
+        super().__init__()
+        self.command = entry.command
+        self.setObjectName(f"functionMenuRow_{entry.code}")
+        self.setProperty("functionRow", True)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setFixedHeight(29)
+        self.setToolTip(entry.description)
+        row = QHBoxLayout(self)
+        row.setContentsMargins(3, 1, 5, 1)
+        row.setSpacing(10)
+        code = QLabel(f"{number:>2})  {entry.code}")
+        code.setObjectName("functionMenuCode")
+        code.setFixedWidth(82)
+        code.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        description = QLabel(entry.description)
+        description.setObjectName("functionMenuDescription")
+        description.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        row.addWidget(code)
+        row.addWidget(description, 1)
+
+    def mouseReleaseEvent(self, event) -> None:  # noqa: N802 - Qt callback
+        if event.button() == Qt.MouseButton.LeftButton and self.rect().contains(event.position().toPoint()):
+            self.triggered.emit(self.command)
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
+
+class _SecurityFunctionMenu(QWidget):
+    command_requested = Signal(str)
+
+    def __init__(self, symbol: str, name: str, security_type: str, currency: str = "") -> None:
+        super().__init__()
+        self.setObjectName("securityFunctionMenu")
+        root = QVBoxLayout(self)
+        root.setContentsMargins(28, 16, 28, 20)
+        root.setSpacing(6)
+
+        breadcrumb = QLabel(
+            f"MAIN MENU OF THRIVEBERG FUNCTIONS  >  {security_type or 'SECURITY'}  >  "
+            f"ANALYZE  >  {name.upper()}  {symbol}"
+        )
+        breadcrumb.setObjectName("functionBreadcrumb")
+        root.addWidget(breadcrumb)
+        root.addSpacing(8)
+
+        columns = QGridLayout()
+        columns.setContentsMargins(0, 0, 0, 0)
+        columns.setHorizontalSpacing(66)
+        columns.setColumnStretch(0, 1)
+        columns.setColumnStretch(1, 1)
+        left_groups, right_groups = _security_function_groups(symbol, security_type, currency)
+        left, next_number = self._menu_column(left_groups, 1)
+        right, _ = self._menu_column(right_groups, next_number)
+        columns.addWidget(left, 0, 0, Qt.AlignmentFlag.AlignTop)
+        columns.addWidget(right, 0, 1, Qt.AlignmentFlag.AlignTop)
+        root.addLayout(columns)
+        root.addStretch(1)
+
+    def _menu_column(
+        self,
+        groups: tuple[tuple[str, tuple[_FunctionEntry, ...]], ...],
+        number: int,
+    ) -> tuple[QWidget, int]:
+        column = QWidget()
+        layout = QVBoxLayout(column)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        for title, entries in groups:
+            heading = QLabel(f"{title}  >")
+            heading.setObjectName("functionGroupTitle")
+            layout.addWidget(heading)
+            for entry in entries:
+                item = _FunctionMenuRow(number, entry)
+                item.triggered.connect(self.command_requested)
+                layout.addWidget(item)
+                number += 1
+            layout.addSpacing(15)
+        layout.addStretch(1)
+        return column, number
+
+
+def _security_function_groups(
+    symbol: str,
+    security_type: str,
+    currency: str,
+) -> tuple[
+    tuple[tuple[str, tuple[_FunctionEntry, ...]], ...],
+    tuple[tuple[str, tuple[_FunctionEntry, ...]], ...],
+]:
+    kind = security_type.upper()
+
+    def item(code: str, description: str, command: str | None = None) -> _FunctionEntry:
+        return _FunctionEntry(code, description, command or f"{symbol} {code}")
+
+    if kind in {"EQUITY", "ETF", "MARKET", ""}:
+        return (
+            (
+                ("COMPANY OVERVIEW", (item("DES", "Security Description"), item("FILINGS", "Company Filings"), item("NEWS", "Company News"))),
+                ("COMPANY ANALYSIS", (item("FA", "Financial Analysis"), item("IS", "Income Statement"), item("BS", "Balance Sheet"), item("CF", "Cash Flow Statement"))),
+                ("RESEARCH & ESTIMATES", (item("EE", "Earnings & Estimates"), item("ANR", "Analyst Recommendations"), item("EVT", "Company Events"))),
+                ("COMPARATIVE ANALYTICS", (item("RV", "Relative Valuation"), item("COMP", "Comparable Company Analysis"))),
+            ),
+            (
+                ("CHARTING & REPORTING", (item("GP", "Price Chart"), item("RISK", "Price & Risk Analytics"), item("FLDS", "Field Source & Methodology"), item("XLS", "Export Financial Statements"))),
+                ("DERIVATIVES", (item("OMON", "Option Monitor"), item("OVDV", "Volatility Surface"), item("OVME", "Option Valuation"))),
+            ),
+        )
+    if kind in {"FX", "CURRENCY", "CRYPTOCURRENCY"}:
+        return (
+            (("MARKET OVERVIEW", (item("GP", "Price Chart"), item("RISK", "Price & Risk Analytics"))),),
+            (("FX ANALYTICS", (item("FWD", "Forward Monitor", f"FWD {symbol}"), item("OVDV", "Volatility Surface"), item("OVME", "Option Valuation"))),),
+        )
+    if kind in {"RATE", "BOND", "FIXED INCOME"}:
+        curve_currency = currency if currency in {"USD", "EUR", "JPY"} else "USD"
+        return (
+            (("SECURITY OVERVIEW", (item("DES", "Security Description"), item("GP", "Price Chart"), item("NEWS", "Issuer News"))),),
+            (("FIXED INCOME ANALYTICS", (item("RISK", "Price & Risk Analytics"), item("CURVE", "Reference Yield Curve", f"CURVE {curve_currency}"))),),
+        )
+    return (
+        (("MARKET OVERVIEW", (item("GP", "Price Chart"), item("RISK", "Price & Risk Analytics"), item("NEWS", "Related News"))),),
+        (("REFERENCE", (item("DES", "Security Description"),)),),
+    )
+
+
+class _WindowChrome(QFrame):
+    def __init__(self, owner: QMainWindow) -> None:
+        super().__init__()
+        self.owner = owner
+        self._drag_position: QPoint | None = None
+        self.setObjectName("windowChrome")
+        self.setFixedHeight(32)
+        row = QHBoxLayout(self)
+        row.setContentsMargins(6, 0, 0, 0)
+        row.setSpacing(0)
+        title = QLabel("THRIVEBERG TERMINAL")
+        title.setObjectName("windowTitle")
+        row.addWidget(title)
+        row.addStretch(1)
+        row.addWidget(
+            self._control(QStyle.StandardPixmap.SP_TitleBarMinButton, owner.showMinimized, "Minimize")
+        )
+        self.maximize_button = self._control(
+            QStyle.StandardPixmap.SP_TitleBarMaxButton,
+            self._toggle_maximize,
+            "Maximize",
+        )
+        row.addWidget(self.maximize_button)
+        close = self._control(QStyle.StandardPixmap.SP_TitleBarCloseButton, owner.close, "Close")
+        close.setObjectName("windowClose")
+        row.addWidget(close)
+
+    def _control(
+        self,
+        icon: QStyle.StandardPixmap,
+        callback: Callable[[], None],
+        tooltip: str,
+    ) -> QPushButton:
+        button = QPushButton()
+        button.setIcon(self.owner.style().standardIcon(icon))
+        button.setToolTip(tooltip)
+        button.setObjectName("windowControl")
+        button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        button.clicked.connect(callback)
+        return button
+
+    def _toggle_maximize(self) -> None:
+        if self.owner.isMaximized():
+            self.owner.showNormal()
+            icon = QStyle.StandardPixmap.SP_TitleBarMaxButton
+            self.maximize_button.setToolTip("Maximize")
+        else:
+            self.owner.showMaximized()
+            icon = QStyle.StandardPixmap.SP_TitleBarNormalButton
+            self.maximize_button.setToolTip("Restore")
+        self.maximize_button.setIcon(self.owner.style().standardIcon(icon))
+
+    def mousePressEvent(self, event) -> None:  # noqa: N802 - Qt callback
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._drag_position = event.globalPosition().toPoint() - self.owner.frameGeometry().topLeft()
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event) -> None:  # noqa: N802 - Qt callback
+        if (
+            self._drag_position is not None
+            and event.buttons() & Qt.MouseButton.LeftButton
+            and not self.owner.isMaximized()
+        ):
+            self.owner.move(event.globalPosition().toPoint() - self._drag_position)
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event) -> None:  # noqa: N802 - Qt callback
+        self._drag_position = None
+        super().mouseReleaseEvent(event)
+
+    def mouseDoubleClickEvent(self, event) -> None:  # noqa: N802 - Qt callback
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._toggle_maximize()
+        super().mouseDoubleClickEvent(event)
+
+
+class _DataConnectionsDialog(QDialog):
+    CONNECTIONS = (
+        ("FINNHUB_KEY", "FINNHUB / REALTIME EQUITIES"),
+        ("COMPANIES_HOUSE_API_KEY", "COMPANIES HOUSE / UK FILINGS"),
+        ("FRED_API_KEY", "FRED / US MACRO"),
+        ("ALPHA_VANTAGE_KEY", "ALPHA VANTAGE"),
+        ("FMP_KEY", "FINANCIAL MODELING PREP"),
+        ("NEWS_API_KEY", "NEWS API"),
+    )
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("THRIVEBERG Data Connections")
+        self.setModal(True)
+        self.setMinimumWidth(720)
+        self.setStyleSheet(qt_stylesheet())
+        self.store = SecureSettings()
+        self.inputs: dict[str, QLineEdit] = {}
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(24, 20, 24, 20)
+        layout.setSpacing(10)
+        heading = QLabel("DATA CONNECTIONS")
+        heading.setStyleSheet(f"color:{AJAX_AMBER};font-size:18px;font-weight:bold")
+        layout.addWidget(heading)
+
+        panel = QFrame()
+        panel.setObjectName("terminalPanel")
+        grid = QGridLayout(panel)
+        grid.setContentsMargins(14, 12, 14, 12)
+        grid.setHorizontalSpacing(8)
+        grid.setVerticalSpacing(7)
+        for row, (name, label) in enumerate(self.CONNECTIONS):
+            caption = QLabel(label)
+            caption.setStyleSheet(f"color:{AJAX_TEXT};font-weight:bold")
+            field = QLineEdit()
+            field.setEchoMode(QLineEdit.EchoMode.Password)
+            field.setPlaceholderText(
+                "CONFIGURED / ENTER TO REPLACE" if self.store.configured(name) else "NOT CONFIGURED"
+            )
+            clear = _button("CLEAR", lambda _checked=False, key=name: self._clear(key))
+            clear.setEnabled(self.store.configured(name))
+            grid.addWidget(caption, row, 0)
+            grid.addWidget(field, row, 1)
+            grid.addWidget(clear, row, 2)
+            self.inputs[name] = field
+        grid.setColumnStretch(1, 1)
+        layout.addWidget(panel)
+
+        self.status = QLabel("WINDOWS DPAPI / CURRENT USER")
+        self.status.setStyleSheet(f"color:{AJAX_MUTED}")
+        layout.addWidget(self.status)
+
+        actions = QHBoxLayout()
+        actions.addStretch(1)
+        cancel = _button("CANCEL", self.reject)
+        save = _button("SAVE CONNECTIONS", self._save)
+        save.setObjectName("amberButton")
+        actions.addWidget(cancel)
+        actions.addWidget(save)
+        layout.addLayout(actions)
+
+    def _clear(self, name: str) -> None:
+        try:
+            self.store.delete(name)
+        except SecureSettingsError as exc:
+            self.status.setText(str(exc).upper())
+            self.status.setStyleSheet(f"color:{AJAX_RED}")
+            return
+        self.status.setText(f"{name} REMOVED")
+        self.status.setStyleSheet(f"color:{AJAX_AMBER}")
+
+    def _save(self) -> None:
+        updates = {
+            name: field.text().strip()
+            for name, field in self.inputs.items()
+            if field.text().strip()
+        }
+        try:
+            if updates:
+                self.store.set_many(updates)
+        except SecureSettingsError as exc:
+            self.status.setText(str(exc).upper())
+            self.status.setStyleSheet(f"color:{AJAX_RED}")
+            return
+        self.accept()
+
+
+class AjaxDesktopWindow(QMainWindow):
+    """Native desktop shell for interactive chart workspaces.
+
+    The market services and command parser remain shared with the Textual terminal,
+    while QWebEngine and VTK receive real native viewports in the central stack.
+    """
+
+    workspace_ready = Signal()
+
+    def __init__(self, *, require_login: bool = True, settings: QSettings | None = None) -> None:
+        super().__init__()
+        self.setWindowTitle("THRIVEBERG Terminal")
+        self.setWindowIcon(thriveberg_icon())
+        self.setWindowFlags(Qt.WindowType.Window | Qt.WindowType.FramelessWindowHint)
+        if require_login:
+            self.setMinimumSize(900, 600)
+            self.setMaximumSize(1000, 660)
+            self.resize(1000, 660)
+        else:
+            self.setMinimumSize(1100, 700)
+            self.resize(1900, 1030)
+        self.setStyleSheet(qt_stylesheet())
+
+        self.social_service = SocialService()
+        self.market_service = MarketService()
+        self.news_service = NewsService(self.market_service.cache)
+        self.registry = self.market_service.registry
+        self.settings = settings or QSettings("THRIVEBERG", "THRIVEBERG TERMINAL")
+        self.workspace_store = WorkspaceStore()
+        self._require_login = require_login
+        self._authenticated = not require_login
+        self._session_persistence_enabled = require_login
+        self._previous_clean_shutdown = bool(
+            self.settings.value("session/clean_shutdown", True, type=bool)
+        )
+        self._restored_session_command = str(
+            self.settings.value("session/last_command", "") or ""
+        ).strip()
+        if self._session_persistence_enabled:
+            self.settings.setValue("session/clean_shutdown", False)
+            self.settings.sync()
+        self._startup_command: str | None = None
+        self._auth_worker: AsyncOperation | None = None
+        self._logout_worker: AsyncOperation | None = None
+        self._startup_manager: StartupManager | None = None
+        self._startup_completed_once = False
+        self.current_symbol = ""
+        self.current_route = DesktopRoute("home", self.current_symbol, raw="HOME")
+        self._history: list[DesktopRoute] = [self.current_route]
+        self._history_index = 0
+        self._loader: _Loader | None = None
+        self._workspace_loaders: list[_Loader] = []
+        self._pending_mount: Callable[[object], None] | None = None
+        self._pending_engine = ""
+        self._load_serial = 0
+        self._suggestion_serial = 0
+        self._suggestion_workers: list[_Loader] = []
+        self._suggestions: list[SecuritySuggestion] = []
+        self._security_directory: dict[str, tuple[str, str]] = {}
+        self._pending_methodology_symbol: str | None = None
+
+        host = QWidget()
+        host_layout = QVBoxLayout(host)
+        host_layout.setContentsMargins(0, 0, 0, 0)
+        host_layout.setSpacing(0)
+        self.window_chrome = _WindowChrome(self)
+        host_layout.addWidget(self.window_chrome)
+
+        self.lifecycle = QStackedWidget()
+        self.splash_page = self._build_splash_page()
+        self.auth_page = self._build_auth_page()
+        self.workspace_tabs = QTabWidget()
+        self.workspace_tabs.setObjectName("workspaceTabs")
+        self.workspace_tabs.setDocumentMode(True)
+        self.workspace_tabs.tabBar().setExpanding(False)
+        self.workspace_tabs.currentChanged.connect(self._workspace_tab_changed)
+
+        terminal = self._build_terminal_workspace()
+        self.social_workspace = SocialDesktopWorkspace(
+            self.social_service,
+            lambda: self.current_route.raw,
+        )
+        self.social_workspace.command_requested.connect(self._open_shared_command)
+        self.workspace_tabs.addTab(terminal, "1) TERMINAL")
+        self.workspace_tabs.addTab(self.social_workspace, "2) SOCIAL")
+        self.lifecycle.addWidget(self.splash_page)
+        self.lifecycle.addWidget(self.auth_page)
+        self.lifecycle.addWidget(self.workspace_tabs)
+        host_layout.addWidget(self.lifecycle, 1)
+        self.setCentralWidget(host)
+
+        QShortcut(QKeySequence("Ctrl+L"), self, activated=self._focus_command)
+        QShortcut(QKeySequence("Ctrl+1"), self, activated=lambda: self.workspace_tabs.setCurrentIndex(0))
+        QShortcut(QKeySequence("Ctrl+2"), self, activated=lambda: self.workspace_tabs.setCurrentIndex(1))
+        QShortcut(QKeySequence("Alt+Left"), self, activated=self.go_back)
+        QShortcut(QKeySequence("Alt+Right"), self, activated=self.go_forward)
+        QShortcut(QKeySequence("Alt+L"), self, activated=self.auth_email.setFocus)
+        QShortcut(QKeySequence("Alt+P"), self, activated=self.auth_password.setFocus)
+        QShortcut(QKeySequence("Escape"), self, activated=self._escape_action)
+        QShortcut(QKeySequence("F8"), self, activated=lambda: self.execute_text("GP"))
+        QShortcut(QKeySequence("F10"), self, activated=lambda: self.execute_text("OVDV"))
+
+        self.clock_timer = QTimer(self)
+        self.clock_timer.setInterval(1_000)
+        self.clock_timer.timeout.connect(self._update_clock)
+        self.clock_timer.start()
+        self._update_clock()
+        self._set_route_labels(self.current_route)
+        self._show_message("LOADING WORKSPACE", "PREPARING MARKET MONITOR", ready=False)
+
+        if self._require_login:
+            self.lifecycle.setCurrentWidget(self.auth_page)
+            self.window_chrome.hide()
+            QTimer.singleShot(0, self._show_login)
+        else:
+            self.lifecycle.setCurrentWidget(self.workspace_tabs)
+            QTimer.singleShot(0, self.command.setFocus)
+
+    def _center_on_active_screen(self) -> None:
+        screen = self.screen() or QApplication.primaryScreen()
+        if screen is None:
+            return
+        frame = self.frameGeometry()
+        frame.moveCenter(screen.availableGeometry().center())
+        self.move(frame.topLeft())
+
+    def _configure_login_window(self) -> None:
+        if self.isMaximized() or self.isFullScreen():
+            self.showNormal()
+        self.setMinimumSize(900, 600)
+        self.setMaximumSize(1000, 660)
+        self.resize(1000, 660)
+        self._center_on_active_screen()
+
+    def _configure_workspace_window(self) -> None:
+        self.setMaximumSize(16_777_215, 16_777_215)
+        self.setMinimumSize(1100, 700)
+        geometry = self.settings.value("session/window_geometry") if self._session_persistence_enabled else None
+        if isinstance(geometry, QByteArray) and not geometry.isEmpty():
+            self.showNormal()
+            self.restoreGeometry(geometry)
+            if bool(self.settings.value("session/window_maximized", True, type=bool)):
+                self.showMaximized()
+        else:
+            self.showMaximized()
+
+    def _build_terminal_workspace(self) -> QWidget:
+        root = QWidget()
+        layout = QVBoxLayout(root)
+        layout.setContentsMargins(9, 6, 9, 6)
+        layout.setSpacing(3)
+        layout.addWidget(self._system_bar())
+        layout.addWidget(self._menu_bar())
+        self.function_bar = QLabel()
+        self.function_bar.setObjectName("functionBar")
+        self.function_bar.setTextFormat(Qt.TextFormat.RichText)
+        self.function_bar.setTextInteractionFlags(Qt.TextInteractionFlag.LinksAccessibleByMouse)
+        self.function_bar.setOpenExternalLinks(False)
+        self.function_bar.linkActivated.connect(self._function_bar_link)
+        layout.addWidget(self.function_bar)
+        self.instrument_bar = QLabel()
+        self.instrument_bar.setObjectName("instrumentBar")
+        layout.addWidget(self.instrument_bar)
+
+        command_row = QHBoxLayout()
+        command_row.setSpacing(6)
+        prompt = QLabel(">")
+        prompt.setStyleSheet(f"color:{AJAX_AMBER};font-weight:bold")
+        command_row.addWidget(prompt)
+        self.command = QLineEdit()
+        self.command.setPlaceholderText("ENTER SECURITY OR FUNCTION")
+        self.command.returnPressed.connect(self._submit_command)
+        self.command.textChanged.connect(self._command_text_changed)
+        self.command.installEventFilter(self)
+        command_row.addWidget(self.command, 1)
+        layout.addLayout(command_row)
+        self.suggestion_panel = self._build_suggestion_panel()
+        layout.addWidget(self.suggestion_panel)
+
+        self.stack = QStackedWidget()
+        self.stack.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        layout.addWidget(self.stack, 1)
+        self.footer = QLabel(
+            "F1 HELP   F2 MARKETS   F5 EQUITY   F8 GP   F9 SOCIAL   F10 OPTIONS   |   WATC  PORT  ALRT  EQS  EVT  FLDS  WSP  UPD"
+        )
+        self.footer.setObjectName("footerBar")
+        layout.addWidget(self.footer)
+        return root
+
+    def _build_suggestion_panel(self) -> QFrame:
+        panel = QFrame()
+        panel.setObjectName("commandSuggestions")
+        panel.setVisible(False)
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        self.suggestion_status = QLabel("SECURITY SEARCH")
+        self.suggestion_status.setObjectName("suggestionStatus")
+        layout.addWidget(self.suggestion_status)
+
+        self.suggestion_table = QTableWidget(0, 4)
+        self.suggestion_table.setObjectName("suggestionTable")
+        self.suggestion_table.setHorizontalHeaderLabels(("SECURITY", "DESCRIPTION", "TYPE", "ACTION"))
+        self.suggestion_table.verticalHeader().hide()
+        self.suggestion_table.verticalHeader().setDefaultSectionSize(28)
+        self.suggestion_table.setShowGrid(False)
+        self.suggestion_table.setAlternatingRowColors(True)
+        self.suggestion_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.suggestion_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.suggestion_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.suggestion_table.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.suggestion_table.cellClicked.connect(self._accept_suggestion)
+        header = self.suggestion_table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        layout.addWidget(self.suggestion_table)
+
+        self._suggestion_timer = QTimer(self)
+        self._suggestion_timer.setSingleShot(True)
+        self._suggestion_timer.setInterval(240)
+        self._suggestion_timer.timeout.connect(self._start_remote_suggestion_search)
+        return panel
+
+    def _build_splash_page(self) -> StartupSplash:
+        return StartupSplash()
+
+    def _build_auth_page(self) -> QFrame:
+        page = QFrame()
+        page.setObjectName("authPage")
+        grid = QGridLayout(page)
+        self.auth_grid = grid
+        grid.setContentsMargins(32, 42, 18, 14)
+        grid.setHorizontalSpacing(16)
+        grid.setVerticalSpacing(8)
+        grid.setColumnMinimumWidth(0, 310)
+        grid.setColumnStretch(1, 1)
+        grid.setColumnMinimumWidth(2, 480)
+        grid.setColumnStretch(3, 1)
+        grid.setRowMinimumHeight(0, 92)
+
+        brand_box = QWidget()
+        brand_layout = QVBoxLayout(brand_box)
+        brand_layout.setContentsMargins(0, 0, 0, 0)
+        brand_layout.setSpacing(0)
+        brand = QLabel("THRIVEBERG")
+        brand.setObjectName("authBrand")
+        brand_layout.addWidget(brand)
+        subtitle = QLabel("TERMINAL")
+        subtitle.setObjectName("authBrandSub")
+        brand_layout.addWidget(subtitle)
+        grid.addWidget(brand_box, 0, 0, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+        login_code = QLabel("LOGI")
+        login_code.setObjectName("authCode")
+        grid.addWidget(login_code, 0, 3, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop)
+
+        login_panel = QWidget()
+        login_layout = QVBoxLayout(login_panel)
+        login_layout.setContentsMargins(0, 10, 0, 0)
+        login_layout.setSpacing(3)
+        self.auth_email_row, self.auth_email_caption, self.auth_email = self._auth_labeled_input(
+            "Login Name"
+        )
+        self.auth_username_row, _username_caption, self.auth_username = self._auth_labeled_input(
+            "Username"
+        )
+        self.auth_name_row, _name_caption, self.auth_name = self._auth_labeled_input("Display Name")
+        self.auth_password_row, _password_caption, self.auth_password = self._auth_labeled_input(
+            "Password", password=True
+        )
+        self.auth_confirm_row, _confirm_caption, self.auth_confirm = self._auth_labeled_input(
+            "Confirm Password", password=True
+        )
+        for row in (
+            self.auth_email_row,
+            self.auth_username_row,
+            self.auth_name_row,
+            self.auth_password_row,
+            self.auth_confirm_row,
+        ):
+            login_layout.addWidget(row)
+        self.auth_password.returnPressed.connect(self._submit_auth)
+        self.auth_confirm.returnPressed.connect(self._submit_auth)
+        self.auth_username.returnPressed.connect(self._submit_auth)
+        self.auth_name.returnPressed.connect(self._submit_auth)
+        login_layout.addSpacing(10)
+        self.auth_submit = QPushButton("Login")
+        self.auth_submit.setObjectName("authSubmit")
+        self.auth_submit.setFixedWidth(160)
+        self.auth_submit.clicked.connect(self._submit_auth)
+        login_layout.addWidget(self.auth_submit, 0, Qt.AlignmentFlag.AlignLeft)
+        self.auth_status = QLabel("SECURE SESSION REQUIRED")
+        self.auth_status.setObjectName("authStatus")
+        self.auth_status.setWordWrap(True)
+        self.auth_status.setFixedWidth(300)
+        login_layout.addWidget(self.auth_status)
+        self.auth_link_spacer = QWidget()
+        self.auth_link_spacer.setFixedHeight(70)
+        login_layout.addWidget(self.auth_link_spacer)
+        self.forgot_link = _auth_link("Forgot Login Name or Password?", self._forgot_login)
+        self.support_link = _auth_link("Contact Support", self._contact_support)
+        self.create_link = _auth_link("Create a New Login", lambda: self._set_auth_mode("register"))
+        login_layout.addWidget(self.forgot_link)
+        login_layout.addSpacing(20)
+        login_layout.addWidget(self.support_link)
+        login_layout.addWidget(self.create_link)
+        grid.addWidget(login_panel, 1, 0, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+
+        language_panel = QWidget()
+        self.language_panel = language_panel
+        language_layout = QVBoxLayout(language_panel)
+        language_layout.setContentsMargins(0, 34, 0, 0)
+        language_layout.setSpacing(9)
+        language_title = QLabel("Select Language for Analytics and\nCommunication Functions:")
+        language_title.setObjectName("languageTitle")
+        language_layout.addWidget(language_title)
+        language_layout.addSpacing(12)
+        language_grid = QGridLayout()
+        language_grid.setContentsMargins(0, 0, 0, 0)
+        language_grid.setHorizontalSpacing(24)
+        language_grid.setVerticalSpacing(2)
+        self._language_group = QButtonGroup(self)
+        self._language_group.setExclusive(True)
+        self._language_buttons: dict[str, QPushButton] = {}
+        languages = (
+            ("English", 0, 0),
+            ("Español", 0, 1),
+            ("한국어", 0, 2),
+            ("日本語", 1, 0),
+            ("Português", 1, 1),
+            ("简体中文", 1, 2),
+            ("Français", 2, 0),
+            ("Italiano", 2, 1),
+            ("Русский", 2, 2),
+            ("Deutsch", 3, 0),
+            ("繁體中文", 3, 1),
+        )
+        selected_language = str(self.settings.value("login/language", "English"))
+        for language, row_index, column_index in languages:
+            button = QPushButton(language)
+            button.setObjectName("languageOption")
+            script_fonts = {
+                "한국어": "Malgun Gothic",
+                "日本語": "Yu Gothic UI",
+                "简体中文": "Microsoft YaHei UI",
+                "繁體中文": "Microsoft JhengHei UI",
+            }
+            if language in script_fonts:
+                button.setStyleSheet(f'font-family:"{script_fonts[language]}"')
+            button.setCheckable(True)
+            button.setChecked(language == selected_language)
+            button.clicked.connect(lambda _checked=False, value=language: self._select_language(value))
+            self._language_group.addButton(button)
+            self._language_buttons[language] = button
+            language_grid.addWidget(button, row_index, column_index)
+        if not any(button.isChecked() for button in self._language_buttons.values()):
+            self._language_buttons["English"].setChecked(True)
+            selected_language = "English"
+        self._select_language(selected_language)
+        language_layout.addLayout(language_grid)
+        language_layout.addSpacing(16)
+        language_note = QLabel(
+            "To customize your News language experience\n"
+            "type LANG <GO> after login."
+        )
+        language_note.setObjectName("languageNote")
+        language_layout.addWidget(language_note)
+        grid.addWidget(language_panel, 1, 2, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+
+        grid.setRowStretch(2, 1)
+        self.auth_terminal_id = QLabel(
+            f"S/N THR-001  |  SID LOCAL  |  Version {__version__} Beta  |  Netid AUTO"
+        )
+        self.auth_terminal_id.setObjectName("authTechnical")
+        grid.addWidget(self.auth_terminal_id, 3, 0, 1, 4)
+        self.auth_legal = QLabel(
+            "THRIVEBERG TERMINAL is an independent financial software project.  "
+            "Market data may be delayed and is provided by third-party data sources.\n"
+            "Information displayed is for informational and analytical purposes only.  "
+            "THRIVEBERG does not provide investment advice or guarantee data accuracy."
+        )
+        self.auth_legal.setObjectName("authLegal")
+        self.auth_legal.setWordWrap(True)
+        self.auth_legal.setMaximumWidth(950)
+        self.auth_legal.setMinimumHeight(80)
+        grid.addWidget(
+            self.auth_legal,
+            4,
+            0,
+            1,
+            4,
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop,
+        )
+        grid.setRowStretch(5, 1)
+        remembered = str(self.settings.value("login/name", ""))
+        self.auth_email.setText(remembered)
+        self._auth_mode = "signin"
+        self._set_auth_mode("signin")
+        return page
+
+    def _auth_labeled_input(
+        self,
+        label: str,
+        *,
+        password: bool = False,
+    ) -> tuple[QWidget, QLabel, QLineEdit]:
+        row = QWidget()
+        layout = QVBoxLayout(row)
+        layout.setContentsMargins(0, 0, 0, 5)
+        layout.setSpacing(1)
+        caption = QLabel(label)
+        caption.setObjectName("authFieldLabel")
+        layout.addWidget(caption)
+        field = QLineEdit()
+        field.setObjectName("authInput")
+        field.setFixedWidth(300)
+        if password:
+            field.setEchoMode(QLineEdit.EchoMode.Password)
+        layout.addWidget(field)
+        return row, caption, field
+
+    def _set_auth_mode(self, mode: str) -> None:
+        registering = mode == "register"
+        self._auth_mode = mode
+        self.auth_grid.setRowMinimumHeight(0, 72 if registering else 92)
+        self.auth_email_caption.setText("Email" if registering else "Login Name")
+        self.auth_username_row.setVisible(registering)
+        self.auth_name_row.setVisible(registering)
+        self.auth_confirm_row.setVisible(registering)
+        self.language_panel.setVisible(not registering)
+        self.auth_legal.setVisible(not registering)
+        self.auth_link_spacer.setFixedHeight(8 if registering else 70)
+        for field in (
+            self.auth_email,
+            self.auth_username,
+            self.auth_name,
+            self.auth_password,
+            self.auth_confirm,
+        ):
+            field.setFixedHeight(28 if registering else 40)
+        self.auth_submit.setText("Create Login" if registering else "Login")
+        self.forgot_link.setVisible(not registering)
+        self.support_link.setVisible(not registering)
+        self.create_link.setText("Back to Login" if registering else "Create a New Login")
+        try:
+            self.create_link.clicked.disconnect()
+        except RuntimeError:
+            pass
+        self.create_link.clicked.connect(
+            (lambda: self._set_auth_mode("signin"))
+            if registering
+            else (lambda: self._set_auth_mode("register"))
+        )
+        self.auth_status.setText("EMAIL CONFIRMATION MAY BE REQUIRED" if registering else "SECURE SESSION REQUIRED")
+        self.auth_status.setStyleSheet(f"color:{AJAX_MUTED}")
+
+    def _show_login(self) -> None:
+        if self._authenticated:
+            return
+        self._configure_login_window()
+        self.window_chrome.hide()
+        self.lifecycle.setCurrentWidget(self.auth_page)
+        if self.social_service.configured:
+            self.auth_status.setText("SECURE SESSION REQUIRED")
+            self.auth_status.setStyleSheet(f"color:{AJAX_MUTED}")
+        else:
+            self.auth_status.setText("SOCIAL SERVER NOT CONFIGURED")
+            self.auth_status.setStyleSheet(f"color:{AJAX_RED}")
+        QTimer.singleShot(0, self.auth_email.setFocus)
+
+    def _forgot_login(self) -> None:
+        self.auth_status.setText("PASSWORD RECOVERY IS PROVIDED BY THE ACCOUNT ADMINISTRATOR")
+        self.auth_status.setStyleSheet(f"color:{AJAX_TEXT}")
+
+    def _contact_support(self) -> None:
+        self.auth_status.setText("SUPPORT: CONTACT THE THRIVEBERG TERMINAL ADMINISTRATOR")
+        self.auth_status.setStyleSheet(f"color:{AJAX_TEXT}")
+
+    def _select_language(self, language: str) -> None:
+        for name, button in self._language_buttons.items():
+            selected = name == language
+            button.setChecked(selected)
+            button.setText(f"✓ {name}" if selected else name)
+        self.settings.setValue("login/language", language)
+        self.settings.sync()
+
+    def _submit_auth(self) -> None:
+        if self._auth_worker is not None:
+            return
+        email = self.auth_email.text().strip()
+        password = self.auth_password.text()
+        registering = self._auth_mode == "register"
+        if not email or not password:
+            self._auth_failed("Email and password are required")
+            return
+        if registering:
+            username = self.auth_username.text().strip()
+            display_name = self.auth_name.text().strip()
+            if password != self.auth_confirm.text():
+                self._auth_failed("Passwords do not match")
+                return
+            operation = lambda: self.social_service.register(email, password, username, display_name)
+            status = "CREATING SECURE ACCOUNT..."
+        else:
+            operation = lambda: self.social_service.sign_in(email, password)
+            status = "AUTHENTICATING..."
+        self.auth_submit.setEnabled(False)
+        self.auth_status.setText(status)
+        self.auth_status.setStyleSheet(f"color:{AJAX_AMBER}")
+        worker = AsyncOperation(operation)
+        self._auth_worker = worker
+        worker.succeeded.connect(self._auth_succeeded, Qt.ConnectionType.QueuedConnection)
+        worker.failed.connect(self._auth_failed, Qt.ConnectionType.QueuedConnection)
+        worker.finished.connect(self._auth_thread_finished, Qt.ConnectionType.QueuedConnection)
+        worker.finished.connect(worker.deleteLater)
+        worker.start()
+
+    @Slot(object)
+    def _auth_succeeded(self, result: object) -> None:
+        self.auth_submit.setEnabled(True)
+        message = "SIGNED IN"
+        session = result
+        if isinstance(result, tuple):
+            session, message = result
+        if session is None:
+            self._set_auth_mode("signin")
+            self.auth_status.setText(str(message).upper())
+            self.auth_status.setStyleSheet(f"color:{AJAX_AMBER}")
+            return
+        self._authenticated = True
+        self.settings.setValue("login/name", self.auth_email.text().strip())
+        self.settings.sync()
+        self.auth_password.clear()
+        self.auth_confirm.clear()
+        self.user_label.setText(f"@{session.username.upper()}")
+        self._begin_boot_sequence(session)
+
+    def _begin_boot_sequence(self, _session: object) -> None:
+        if self._startup_completed_once:
+            self._enter_workspace()
+            return
+        self.window_chrome.hide()
+        self._configure_splash_window()
+        self.splash_page.reset()
+        self.lifecycle.setCurrentWidget(self.splash_page)
+        manager = StartupManager(self._startup_stages(), parent=self)
+        self._startup_manager = manager
+        manager.stage_started.connect(self.splash_page.stage_started)
+        manager.stage_progress.connect(self.splash_page.stage_progress)
+        manager.stage_completed.connect(self.splash_page.stage_completed)
+        manager.stage_failed.connect(self.splash_page.stage_failed)
+        manager.startup_completed.connect(self._startup_finished)
+        manager.start()
+
+    def _configure_splash_window(self) -> None:
+        self.setMaximumSize(16_777_215, 16_777_215)
+        self.setMinimumSize(1100, 700)
+        self.showMaximized()
+
+    def _startup_stages(self) -> tuple[StartupStage, ...]:
+        def core(report) -> str:
+            report(0.25, "CHECKING LOCAL STORE")
+            required = {"cache", "watchlists", "workspace_snapshots"}
+            with get_connection(self.market_service.cache.path) as connection:
+                rows = connection.execute(
+                    "SELECT name FROM sqlite_master WHERE type = 'table'"
+                ).fetchall()
+                available = {str(row["name"]) for row in rows}
+                connection.execute("SELECT 1").fetchone()
+            missing = sorted(required - available)
+            if missing:
+                raise RuntimeError("Missing local tables: " + ", ".join(missing))
+            report(0.75, "LOCAL STORE READY")
+            if self._require_login and not self.social_service.configured:
+                raise RuntimeError("Authentication service is not configured")
+            return "CORE SERVICES READY"
+
+        def data(report) -> str:
+            report(0.25, "CHECKING PROVIDERS")
+            providers = tuple(self.market_service.market_providers)
+            statements = tuple(self.market_service.statement_providers)
+            if not providers or not statements:
+                raise RuntimeError("No market data providers are configured")
+            report(0.65, "CHECKING LOCAL CACHE")
+            with get_connection(self.market_service.cache.path) as connection:
+                connection.execute("SELECT COUNT(*) FROM cache").fetchone()
+            return f"{len(providers)} MARKET / {len(statements)} STATEMENT PROVIDERS"
+
+        def markets(report) -> str:
+            report(0.25, "LOADING INSTRUMENT CATALOG")
+            instruments = self.registry.list()
+            if not instruments:
+                raise RuntimeError("Instrument catalog is empty")
+            report(0.65, "LOADING WATCHLISTS")
+            watchlists = self.market_service.watchlists.names()
+            self.market_service.watchlists.symbols(watchlists[0])
+            return f"{len(instruments)} INSTRUMENTS / {len(watchlists)} WATCHLISTS"
+
+        def news(report) -> str:
+            report(0.3, "CHECKING NEWS SOURCES")
+            providers = tuple(self.news_service.providers)
+            if not providers:
+                raise RuntimeError("No news providers are configured")
+            report(0.7, "READING NEWS CACHE")
+            cached = self.news_service._cached_items(None)
+            return f"{len(providers)} SOURCES / {len(cached)} CACHED HEADLINES"
+
+        def workspace(report) -> str:
+            report(0.3, "READING WORKSPACES")
+            snapshots = self.workspace_store.list()
+            report(0.7, "RESTORING SESSION ROUTE")
+            if self._restored_session_command:
+                resolve_desktop_command(self._restored_session_command)
+            return f"{len(snapshots)} SAVED WORKSPACES"
+
+        return (
+            StartupStage("CORE", core, critical=True),
+            StartupStage("DATA", data),
+            StartupStage("MARKETS", markets),
+            StartupStage("NEWS", news),
+            StartupStage("WORKSPACE", workspace, critical=True),
+        )
+
+    @Slot(bool, object)
+    def _startup_finished(self, success: bool, failures: object) -> None:
+        failure_rows = tuple(failures) if isinstance(failures, (tuple, list)) else ()
+        if not success:
+            self.splash_page.finish(failed=True)
+            return
+        self._startup_completed_once = True
+        self.splash_page.finish(degraded=bool(failure_rows))
+        QTimer.singleShot(350, self._enter_workspace)
+
+    def _enter_workspace(self) -> None:
+        if not self._authenticated:
+            return
+        self.window_chrome.show()
+        self.lifecycle.setCurrentWidget(self.workspace_tabs)
+        self.workspace_tabs.setCurrentIndex(0)
+        self._configure_workspace_window()
+        self.social_workspace.activate()
+        if self._session_persistence_enabled:
+            restored_symbol = str(self.settings.value("session/current_symbol", "") or "").strip().upper()
+            restored_history = self.settings.value("session/history", []) or []
+            if isinstance(restored_history, str):
+                restored_history = [restored_history]
+            self.current_symbol = restored_symbol
+            routes = [
+                resolve_desktop_command(str(item), restored_symbol)
+                for item in restored_history
+                if str(item).strip()
+            ]
+            if routes:
+                self._history = routes[-50:]
+                self._history_index = len(self._history) - 1
+                self._update_navigation()
+        command = self._startup_command
+        self._startup_command = None
+        if not command and self._restored_session_command:
+            command = self._restored_session_command
+        if command:
+            QTimer.singleShot(0, lambda: self.execute_text(command))
+            if not self._previous_clean_shutdown:
+                self.statusBar().showMessage("PREVIOUS SESSION RECOVERED", 8_000)
+        else:
+            QTimer.singleShot(0, lambda: self.execute_text("HOME"))
+
+    @Slot(str)
+    def _auth_failed(self, message: str) -> None:
+        self.auth_submit.setEnabled(True)
+        self.auth_status.setText(message.upper())
+        self.auth_status.setStyleSheet(f"color:{AJAX_RED}")
+
+    @Slot()
+    def _auth_thread_finished(self) -> None:
+        worker = self.sender()
+        if worker is self._auth_worker:
+            self._auth_worker = None
+
+    def start(self, initial_command: str | None = None) -> None:
+        self._startup_command = initial_command
+        if self._authenticated:
+            self.lifecycle.setCurrentWidget(self.workspace_tabs)
+            if initial_command:
+                QTimer.singleShot(0, lambda: self.execute_text(initial_command))
+            else:
+                QTimer.singleShot(0, lambda: self.execute_text("HOME"))
+
+    def logout(self) -> None:
+        if not self._authenticated:
+            self._show_login()
+            return
+        session = self.social_service.session
+        provider = self.social_service.provider
+        self._authenticated = False
+        self.social_workspace.poll_timer.stop()
+        self.current_symbol = ""
+        self.current_route = DesktopRoute("home", "", raw="HOME")
+        self._history = [self.current_route]
+        self._history_index = 0
+        self._update_navigation()
+        self.user_label.setText("SIGNED OUT")
+        self.auth_password.clear()
+        self.auth_confirm.clear()
+        self.social_service.session = None
+        self._set_auth_mode("signin")
+        self._show_login()
+        if provider is not None and session is not None:
+            worker = AsyncOperation(lambda: provider.sign_out(session))
+            self._logout_worker = worker
+            worker.succeeded.connect(self._logout_finished, Qt.ConnectionType.QueuedConnection)
+            worker.failed.connect(self._logout_finished, Qt.ConnectionType.QueuedConnection)
+            worker.finished.connect(self._logout_thread_finished, Qt.ConnectionType.QueuedConnection)
+            worker.finished.connect(worker.deleteLater)
+            worker.start()
+
+    @Slot()
+    @Slot(object)
+    def _logout_finished(self, _result: object = None) -> None:
+        pass
+
+    @Slot()
+    def _logout_thread_finished(self) -> None:
+        worker = self.sender()
+        if worker is self._logout_worker:
+            self._logout_worker = None
+
+    def _escape_action(self) -> None:
+        if self.lifecycle.currentWidget() in {self.auth_page, self.splash_page}:
+            self.close()
+        elif not self.suggestion_panel.isHidden():
+            self._hide_suggestions()
+        else:
+            self.command.clear()
+            self.command.setFocus()
+
+    def _focus_command(self) -> None:
+        if not self._authenticated:
+            return
+        self.workspace_tabs.setCurrentIndex(0)
+        self.command.setFocus()
+
+    @Slot(int)
+    def _workspace_tab_changed(self, index: int) -> None:
+        if index == 1 and self._authenticated:
+            self.social_workspace.activate()
+
+    @Slot(str)
+    def _open_shared_command(self, command: str) -> None:
+        self.workspace_tabs.setCurrentIndex(0)
+        self.execute_text(command)
+
+    def _system_bar(self) -> QFrame:
+        frame = QFrame()
+        frame.setObjectName("systemBar")
+        row = QHBoxLayout(frame)
+        row.setContentsMargins(8, 2, 8, 2)
+        row.setSpacing(24)
+        brand = QLabel("THRIVEBERG TERMINAL")
+        brand.setStyleSheet(f"color:{AJAX_AMBER};font-weight:bold")
+        row.addWidget(brand)
+        self.local_clock = QLabel()
+        self.utc_clock = QLabel()
+        row.addWidget(self.local_clock)
+        row.addWidget(self.utc_clock)
+        row.addWidget(QLabel("DATA: AUTO"))
+        row.addWidget(QLabel("MARKET WORKSTATION"))
+        row.addStretch(1)
+        self.user_label = QLabel("SIGNED OUT")
+        self.user_label.setStyleSheet(f"color:{AJAX_TEXT}")
+        row.addWidget(self.user_label)
+        self.engine_label = QLabel("NATIVE QT / WEBENGINE / VTK")
+        self.engine_label.setStyleSheet(f"color:{AJAX_MUTED}")
+        row.addWidget(self.engine_label)
+        return frame
+
+    def _menu_bar(self) -> QFrame:
+        frame = QFrame()
+        frame.setObjectName("menuBar")
+        row = QHBoxLayout(frame)
+        row.setContentsMargins(2, 0, 2, 0)
+        row.setSpacing(1)
+        self.back_button = _button("<", self.go_back)
+        self.forward_button = _button(">", self.go_forward)
+        row.addWidget(_button("GO", lambda: self.command.setFocus()))
+        row.addWidget(self.back_button)
+        row.addWidget(self.forward_button)
+        row.addWidget(_button("F1 HELP", lambda: self._show_message("HELP", "TYPE A SECURITY, THEN GP, OVDV OR CURVE.")))
+        row.addWidget(_button("MARKETS", lambda: self.execute_text("HOME")))
+        row.addWidget(_button("WATC", lambda: self.execute_text("WATC")))
+        row.addWidget(_button("PORT", lambda: self.execute_text("PORT")))
+        row.addWidget(_button("ALRT", lambda: self.execute_text("ALRT")))
+        row.addWidget(_button("EQS", lambda: self.execute_text("EQS")))
+        row.addWidget(_button("EVT", lambda: self.execute_text("EVT")))
+        row.addWidget(_button("MAP", lambda: self.execute_text("MAP")))
+        row.addWidget(_button("SOCIAL", lambda: self.execute_text("SOCIAL")))
+        tools_button = _button("TOOLS", lambda: None)
+        tools_menu = QMenu(tools_button)
+        tools_menu.addAction("CURVE  YIELD CURVES", lambda: self.execute_text("CURVE USD"))
+        tools_menu.addAction("WSP  WORKSPACES", lambda: self.execute_text("WSP"))
+        tools_menu.addAction("UPD  BETA RELEASES", lambda: self.execute_text("UPD"))
+        tools_menu.addSeparator()
+        tools_menu.addAction("DATA CONNECTIONS", self._show_data_connections)
+        tools_button.setMenu(tools_menu)
+        row.addWidget(tools_button)
+        row.addStretch(1)
+        row.addWidget(_button("LOGOUT", self.logout))
+        self.popout_button = _button("POP OUT", self.pop_out)
+        self.popout_button.setEnabled(False)
+        row.addWidget(self.popout_button)
+        return frame
+
+    def eventFilter(self, watched, event) -> bool:  # noqa: N802 - Qt callback
+        if watched is self.command and event.type() == QEvent.Type.KeyPress:
+            key = event.key()
+            if not self.suggestion_panel.isHidden():
+                if key in {Qt.Key.Key_Down, Qt.Key.Key_Up} and self._suggestions:
+                    current = max(self.suggestion_table.currentRow(), 0)
+                    step = 1 if key == Qt.Key.Key_Down else -1
+                    row = (current + step) % len(self._suggestions)
+                    self.suggestion_table.setCurrentCell(row, 0)
+                    return True
+                if key in {Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Tab} and self._suggestions:
+                    self._accept_suggestion(max(self.suggestion_table.currentRow(), 0))
+                    return True
+                if key == Qt.Key.Key_Escape:
+                    self._hide_suggestions()
+                    return True
+        return super().eventFilter(watched, event)
+
+    @Slot(str)
+    def _command_text_changed(self, text: str) -> None:
+        clean = " ".join(text.strip().upper().split())
+        self._suggestion_timer.stop()
+        self._suggestion_serial += 1
+        if not clean:
+            self._hide_suggestions(invalidate=False)
+            return
+
+        command_rows = self._command_suggestion_rows(clean)
+        if command_rows:
+            self._render_suggestions(command_rows, "FUNCTION SEARCH  |  LOCAL COMMAND DIRECTORY")
+            return
+
+        search_query, _function = security_search_context(clean)
+        if not search_query:
+            self._hide_suggestions(invalidate=False)
+            return
+        local_results = [
+            (item.symbol, item.name, str(item.asset_class))
+            for item in self.registry.search(search_query, limit=8)
+        ]
+        local_rows = security_suggestions(clean, local_results, source="LOCAL")
+        status = "SECURITY SEARCH  |  LOCAL MATCHES  |  GLOBAL DIRECTORY..."
+        self._render_suggestions(local_rows, status, show_empty=True)
+        if len(search_query.replace(" ", "")) >= 2:
+            self._suggestion_timer.start()
+
+    def _command_suggestion_rows(self, clean: str) -> list[SecuritySuggestion]:
+        parts = clean.split()
+        is_command_prefix = any(item.command.startswith(clean) for item in COMMANDS)
+        is_bare_security_function = len(parts) == 1 and parts[0] in SYMBOL_FUNCTIONS
+        if not (is_command_prefix or is_bare_security_function):
+            return []
+        if is_bare_security_function and not any(item.command == clean for item in COMMANDS):
+            function = parts[0]
+            return [
+                SecuritySuggestion(
+                    command=function,
+                    symbol=function,
+                    name=SYMBOL_FUNCTIONS[function],
+                    security_type="FUNCTION",
+                    source="LOCAL",
+                )
+            ]
+        return [
+            SecuritySuggestion(
+                command=item.command,
+                symbol=item.command,
+                name=item.description,
+                security_type="FUNCTION",
+                source="LOCAL",
+            )
+            for item in command_suggestions(clean, self.registry, limit=8)
+            if item.description != "Resolve ticker dynamically"
+        ]
+
+    def _start_remote_suggestion_search(self) -> None:
+        raw = " ".join(self.command.text().strip().upper().split())
+        search_query, _function = security_search_context(raw)
+        if not search_query:
+            return
+        self._suggestion_serial += 1
+        serial = self._suggestion_serial
+        worker = _Loader(lambda: asyncio.run(self.market_service.search(search_query)))
+        self._suggestion_workers.append(worker)
+        worker.loaded.connect(
+            lambda results, token=serial, query=raw: self._remote_suggestions_loaded(token, query, results),
+            Qt.ConnectionType.QueuedConnection,
+        )
+        worker.failed.connect(
+            lambda _error, token=serial, query=raw: self._remote_suggestions_failed(token, query),
+            Qt.ConnectionType.QueuedConnection,
+        )
+        worker.finished.connect(
+            lambda active=worker: self._release_suggestion_worker(active),
+            Qt.ConnectionType.QueuedConnection,
+        )
+        worker.finished.connect(worker.deleteLater)
+        worker.start()
+
+    def _remote_suggestions_loaded(self, serial: int, raw: str, results: object) -> None:
+        if serial != self._suggestion_serial:
+            return
+        current = " ".join(self.command.text().strip().upper().split())
+        if current != raw or not isinstance(results, list):
+            return
+        rows = security_suggestions(raw, results, source="GLOBAL")
+        self._render_suggestions(rows, "SECURITY SEARCH  |  LOCAL CATALOG + GLOBAL DIRECTORY")
+
+    def _remote_suggestions_failed(self, serial: int, raw: str) -> None:
+        if serial != self._suggestion_serial:
+            return
+        current = " ".join(self.command.text().strip().upper().split())
+        if current == raw:
+            self.suggestion_status.setText("SECURITY SEARCH  |  LOCAL CATALOG  |  GLOBAL DIRECTORY UNAVAILABLE")
+
+    def _release_suggestion_worker(self, worker: _Loader) -> None:
+        if worker in self._suggestion_workers:
+            self._suggestion_workers.remove(worker)
+
+    def _render_suggestions(
+        self,
+        rows: list[SecuritySuggestion],
+        status: str,
+        *,
+        show_empty: bool = False,
+    ) -> None:
+        unique: list[SecuritySuggestion] = []
+        seen: set[str] = set()
+        for row in rows:
+            if row.command in seen:
+                continue
+            seen.add(row.command)
+            unique.append(row)
+        self._suggestions = unique[:8]
+        self.suggestion_status.setText(status)
+        self.suggestion_table.setRowCount(len(self._suggestions))
+        for index, suggestion in enumerate(self._suggestions):
+            action = "SELECT" if suggestion.command == suggestion.symbol else suggestion.command.split()[-1]
+            values = (suggestion.symbol, suggestion.name, suggestion.security_type, action)
+            for column, value in enumerate(values):
+                item = QTableWidgetItem(value)
+                item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
+                if column == 0:
+                    item.setForeground(QColor(AJAX_TEXT))
+                elif column == 3:
+                    item.setForeground(QColor(AJAX_AMBER))
+                self.suggestion_table.setItem(index, column, item)
+        if self._suggestions:
+            self.suggestion_table.setCurrentCell(0, 0)
+        table_height = 31 + 28 * max(len(self._suggestions), 1)
+        self.suggestion_table.setFixedHeight(table_height)
+        self.suggestion_panel.setFixedHeight(28 + table_height)
+        self.suggestion_panel.setVisible(bool(self._suggestions) or show_empty)
+
+    @Slot(int)
+    @Slot(int, int)
+    def _accept_suggestion(self, row: int, _column: int = 0) -> None:
+        if not 0 <= row < len(self._suggestions):
+            return
+        suggestion = self._suggestions[row]
+        command = suggestion.command
+        if suggestion.security_type != "FUNCTION":
+            self._security_directory[suggestion.symbol] = (suggestion.name, suggestion.security_type)
+        self._hide_suggestions()
+        self.command.clear()
+        self.execute_text(command)
+        QTimer.singleShot(0, self.command.setFocus)
+
+    def _hide_suggestions(self, *, invalidate: bool = True) -> None:
+        self._suggestion_timer.stop()
+        if invalidate:
+            self._suggestion_serial += 1
+        self._suggestions = []
+        self.suggestion_table.setRowCount(0)
+        self.suggestion_panel.hide()
+
+    def _submit_command(self) -> None:
+        raw = self.command.text()
+        self._hide_suggestions()
+        self.command.clear()
+        if raw.strip():
+            self.execute_text(raw)
+
+    def execute_text(self, raw: str, *, record_history: bool = True) -> None:
+        self._hide_suggestions()
+        if " ".join(raw.strip().upper().split()) in {"LOGOUT", "SIGN OUT", "SIGNOUT"}:
+            self.logout()
+            return
+        route = resolve_desktop_command(raw, self.current_symbol)
+        parsed = parse_command(route.raw)
+        if route.kind != "social":
+            self.workspace_tabs.setCurrentIndex(0)
+        if route.kind == "select":
+            self.current_symbol = route.target
+            self.current_route = route
+            self._record(route, record_history)
+            self._set_route_labels(route)
+            self._persist_session_state()
+            self._show_security_function_menu(route.target)
+            return
+        if self._is_security_context(route, parsed):
+            self.current_symbol = route.target
+        self.current_route = route
+        self._record(route, record_history)
+        self._set_route_labels(route)
+        self._persist_session_state()
+        if route.kind == "home":
+            self._show_home()
+        elif route.kind == "security-required":
+            self.engine_label.setText("SECURITY SELECTION REQUIRED")
+            self.popout_button.setEnabled(False)
+            self._show_message(
+                "NO SECURITY LOADED",
+                f"{route.raw} REQUIRES AN ACTIVE SECURITY. ENTER A NAME OR TICKER, THEN SELECT THE FUNCTION.",
+            )
+            QTimer.singleShot(0, self.command.setFocus)
+        elif route.kind == "price":
+            self._load_workspace(
+                "LIGHTWEIGHT CHARTS",
+                lambda: _load_price(route.target, route.period or "1Y", route.interval),
+                self._mount_price,
+            )
+        elif route.kind == "curve":
+            self._load_workspace("APACHE ECHARTS", lambda: _load_curve(route.target), self._mount_curve)
+        elif route.kind == "macro-map":
+            self._load_workspace(
+                "APACHE ECHARTS / GLOBAL MACRO",
+                lambda: load_macro_map(parsed.args),
+                self._mount_macro_map,
+            )
+        elif route.kind == "watchlist":
+            self._load_workspace(
+                "NATIVE EDITABLE WATCHLIST",
+                lambda: load_watchlist(parsed.args),
+                self._mount_watchlist,
+            )
+        elif route.kind == "portfolio":
+            self._load_workspace(
+                "NATIVE PORTFOLIO MANAGER",
+                lambda: load_portfolio(parsed.args),
+                self._mount_portfolio,
+            )
+        elif route.kind == "alerts":
+            self._load_workspace(
+                "NATIVE MARKET ALERTS",
+                lambda: load_alerts(parsed.args),
+                self._mount_alerts,
+            )
+        elif route.kind == "workspaces":
+            self._show_workspace_manager()
+        elif route.kind == "updates":
+            self._load_workspace(
+                "BETA RELEASE MANAGER",
+                scan_beta_releases,
+                self._mount_updates,
+            )
+        elif route.kind == "ovdv":
+            self._load_workspace("PYVISTA / VTK", lambda: _load_surface(route.target), self._mount_ovdv)
+        elif route.kind == "option-monitor":
+            expiry = parsed.args[1] if len(parsed.args) > 1 else None
+            self._load_workspace(
+                "NATIVE OPTION MONITOR",
+                lambda: load_option_monitor(route.target, expiry),
+                self._mount_options,
+            )
+        elif route.kind == "option-valuation":
+            side = parsed.args[1] if len(parsed.args) > 1 else None
+            strike = parsed.args[2] if len(parsed.args) > 2 else None
+            expiry = parsed.args[3] if len(parsed.args) > 3 else None
+            self._load_workspace(
+                "NATIVE OPTION VALUATION",
+                lambda: load_option_valuation(route.target, side, strike, expiry),
+                self._mount_options,
+            )
+        elif route.kind == "description":
+            self._load_workspace(
+                "NATIVE SECURITY DESCRIPTION",
+                lambda: load_security_description(route.target),
+                self._mount_description,
+            )
+        elif route.kind == "data-audit":
+            field_filter = " ".join(parsed.args[1:]) if len(parsed.args) > 1 else ""
+            self._load_workspace(
+                "FIELD PROVENANCE AUDIT",
+                lambda: load_data_audit(route.target, field_filter),
+                self._mount_data_audit,
+            )
+        elif route.kind == "financial-analysis":
+            self._load_workspace(
+                "NATIVE FINANCIAL ANALYSIS",
+                lambda: load_financial_analysis(route.target),
+                self._mount_financial_analysis,
+            )
+        elif route.kind.startswith("financial-") and route.kind != "financial-export":
+            statement_types = {
+                "financial-income": StatementType.INCOME,
+                "financial-balance": StatementType.BALANCE_SHEET,
+                "financial-cashflow": StatementType.CASH_FLOW,
+            }
+            refresh = route.raw.endswith(" REFRESH")
+            self._load_workspace(
+                "NATIVE FINANCIAL STATEMENTS",
+                lambda: load_financial_statement(
+                    route.target,
+                    statement_types[route.kind],
+                    refresh=refresh,
+                ),
+                self._mount_financial_statement,
+            )
+        elif route.kind == "financial-export":
+            self._load_workspace(
+                "EXCEL EXPORT",
+                lambda: export_financial_statements(route.target),
+                self._mount_financial_export,
+            )
+        elif route.kind == "relative-valuation":
+            peers = list(parsed.args[1:]) if len(parsed.args) > 1 else None
+            self._load_workspace(
+                "NATIVE RELATIVE VALUATION",
+                lambda: load_relative_valuation(route.target, peers),
+                self._mount_research,
+            )
+        elif route.kind == "estimates":
+            self._load_workspace(
+                "NATIVE CONSENSUS ESTIMATES",
+                lambda: load_estimates(route.target),
+                self._mount_research,
+            )
+        elif route.kind == "analyst":
+            self._load_workspace(
+                "NATIVE ANALYST CONSENSUS",
+                lambda: load_analyst_consensus(route.target),
+                self._mount_research,
+            )
+        elif route.kind == "dividends":
+            self._load_workspace(
+                "NATIVE DIVIDEND ANALYSIS",
+                lambda: load_dividends(route.target),
+                self._mount_research,
+            )
+        elif route.kind == "events":
+            self._load_workspace(
+                "NATIVE CORPORATE EVENTS",
+                lambda: load_events(route.target),
+                self._mount_research,
+            )
+        elif route.kind == "event-calendar":
+            try:
+                days = max(1, min(365, int(route.period or "30")))
+            except ValueError:
+                days = 30
+            try:
+                page = max(1, int(route.interval or "1"))
+            except ValueError:
+                page = 1
+            scope = "ALL"
+            selection = ""
+            if route.target.startswith("WATC:"):
+                scope = "WATCHLIST"
+                selection = urllib.parse.unquote(route.target.split(":", 1)[1])
+            elif route.target.startswith("PORT:"):
+                scope = "PORTFOLIO"
+                selection = urllib.parse.unquote(route.target.split(":", 1)[1])
+            filters = {"MCAP": "LARGEST", "IND": "ALL", "GEO": "US_LISTED"}
+            for token in parsed.args[3:]:
+                if ":" not in token:
+                    continue
+                key, value = token.split(":", 1)
+                if key in filters and value:
+                    filters[key] = urllib.parse.unquote(value)
+            self._load_workspace(
+                "NATIVE CORPORATE CALENDAR",
+                lambda: load_event_calendar(
+                    days,
+                    scope,
+                    selection,
+                    page,
+                    market_cap_filter=filters["MCAP"],
+                    industry_filter=filters["IND"],
+                    geography_filter=filters["GEO"],
+                ),
+                self._mount_event_calendar,
+            )
+        elif route.kind in {"filings", "filings-10k", "filings-10q"}:
+            filing_modes = {
+                "filings": (("10-K", "10-Q"), "FILINGS"),
+                "filings-10k": (("10-K",), "10K"),
+                "filings-10q": (("10-Q",), "10Q"),
+            }
+            forms, active = filing_modes[route.kind]
+            self._load_workspace(
+                "NATIVE REGULATORY FILINGS",
+                lambda: load_filings(route.target, forms, active),
+                self._mount_research,
+            )
+        elif route.kind == "screener":
+            self._load_workspace(
+                "NATIVE EQUITY SCREENING",
+                lambda: load_screener(parsed.args),
+                self._mount_research,
+            )
+        elif route.kind == "social":
+            self.workspace_tabs.setCurrentIndex(1)
+            self.social_workspace.activate()
+            QTimer.singleShot(0, self.workspace_ready.emit)
+        else:
+            columns = max(120, self.stack.width() // 10)
+            rows = max(34, self.stack.height() // 20)
+            classic_command = route.raw
+            global_without_target = {CommandAction.FX, CommandAction.FWD}
+            if (
+                parsed.action in SECURITY_FUNCTIONS
+                and not parsed.target
+                and parsed.action not in global_without_target
+                and self.current_symbol
+            ):
+                classic_command = f"{self.current_symbol} {route.raw}"
+            self._load_workspace(
+                "TEXTUAL / RICH",
+                lambda: render_classic_snapshot(
+                    classic_command,
+                    self.social_service,
+                    columns=columns,
+                    rows=rows,
+                ),
+                self._mount_classic,
+            )
+
+    def _record(self, route: DesktopRoute, enabled: bool) -> None:
+        if not enabled:
+            return
+        if self._history and self._history[self._history_index] == route:
+            return
+        del self._history[self._history_index + 1 :]
+        self._history.append(route)
+        self._history_index = len(self._history) - 1
+        self._update_navigation()
+
+    def _persist_session_state(self) -> None:
+        if not self._session_persistence_enabled:
+            return
+        self.settings.setValue("session/last_command", self.current_route.raw or "HOME")
+        self.settings.setValue("session/current_symbol", self.current_symbol)
+        self.settings.setValue("session/history", [route.raw for route in self._history[-50:] if route.raw])
+        self.settings.setValue("session/window_geometry", self.saveGeometry())
+        self.settings.setValue("session/window_maximized", self.isMaximized())
+
+    def go_back(self) -> None:
+        if self._history_index <= 0:
+            return
+        self._history_index -= 1
+        self._open_route(self._history[self._history_index])
+
+    def go_forward(self) -> None:
+        if self._history_index >= len(self._history) - 1:
+            return
+        self._history_index += 1
+        self._open_route(self._history[self._history_index])
+
+    def _open_route(self, route: DesktopRoute) -> None:
+        if route.kind == "select":
+            self.current_symbol = route.target
+            self.current_route = route
+            self._set_route_labels(route)
+            self._show_message(f"{route.target} SELECTED", "ENTER A FUNCTION: GP  |  OVDV")
+        else:
+            self.execute_text(route.raw, record_history=False)
+        self._update_navigation()
+
+    def _update_navigation(self) -> None:
+        self.back_button.setEnabled(self._history_index > 0)
+        self.forward_button.setEnabled(self._history_index < len(self._history) - 1)
+
+    def _load_workspace(
+        self,
+        engine: str,
+        loader: Callable[[], object],
+        mount: Callable[[object], None],
+    ) -> None:
+        self._load_serial += 1
+        serial = self._load_serial
+        self.popout_button.setEnabled(False)
+        self.engine_label.setText(f"LOADING {engine}...")
+        self._show_message(
+            f"LOADING {self.current_route.raw}",
+            f"INITIALIZING {engine}",
+            ready=False,
+        )
+        thread = _Loader(loader)
+        thread.setProperty("ajaxSerial", serial)
+        self._workspace_loaders.append(thread)
+        self._loader = thread
+        self._pending_mount = mount
+        self._pending_engine = engine
+        thread.loaded.connect(self._workspace_loaded, Qt.ConnectionType.QueuedConnection)
+        thread.failed.connect(self._workspace_failed, Qt.ConnectionType.QueuedConnection)
+        thread.finished.connect(self._workspace_thread_finished, Qt.ConnectionType.QueuedConnection)
+        thread.start()
+
+    @Slot(object)
+    def _workspace_loaded(self, model: object) -> None:
+        thread = self.sender()
+        if thread is self._loader and int(thread.property("ajaxSerial")) == self._load_serial:
+            mount = self._pending_mount
+            if mount is not None:
+                mount(model)
+
+    @Slot(str)
+    def _workspace_failed(self, message: str) -> None:
+        thread = self.sender()
+        if thread is self._loader and int(thread.property("ajaxSerial")) == self._load_serial:
+            self.engine_label.setText(f"{self._pending_engine} ERROR")
+            self._show_message("DATA / ENGINE ERROR", message, error=True)
+
+    @Slot()
+    def _workspace_thread_finished(self) -> None:
+        thread = self.sender()
+        if thread in self._workspace_loaders:
+            self._workspace_loaders.remove(thread)
+        if thread is self._loader:
+            self._loader = None
+            self._pending_mount = None
+        thread.deleteLater()
+
+    def _mount_price(self, model: object) -> None:
+        controller = PriceChartWindow(model)
+        controller.title.hide()
+        controller.market_updated.connect(self._update_price_instrument)
+        controller.chart.loadFinished.connect(lambda _ok: self.workspace_ready.emit())
+        controller.refresh_requested.connect(
+            lambda symbol, period, interval: self.execute_text(f"GP {symbol} {period} {interval}")
+        )
+        workspace = controller.takeCentralWidget()
+        workspace._ajax_controller = controller
+        self._replace_workspace(workspace)
+        self.engine_label.setText("TRADINGVIEW LIGHTWEIGHT CHARTS 5.2.1")
+        self._update_price_instrument(model)
+        self.popout_button.setEnabled(True)
+        QTimer.singleShot(6_000, self.workspace_ready.emit)
+
+    def _mount_curve(self, model: object) -> None:
+        controller = CurveWindow(model)
+        controller.title.hide()
+        controller.chart.loadFinished.connect(lambda _ok: self.workspace_ready.emit())
+        controller.refresh_requested.connect(lambda currency: self.execute_text(f"CURVE {currency}"))
+        workspace = controller.takeCentralWidget()
+        workspace._ajax_controller = controller
+        self._replace_workspace(workspace)
+        self.engine_label.setText("APACHE ECHARTS 6.1.0")
+        self.instrument_bar.setText(
+            f"{model.currency}   |   {model.name.upper()}   |   {len(model.points)} TENORS   |   "
+            f"{model.provider} {model.quality}"
+        )
+        self.popout_button.setEnabled(True)
+        QTimer.singleShot(6_000, self.workspace_ready.emit)
+
+    def _mount_macro_map(self, model: object) -> None:
+        if not isinstance(model, MacroMapLoad):
+            raise TypeError("Macro map loader returned an invalid result")
+        workspace = MacroMapWorkspace(model)
+        workspace.command_requested.connect(self.execute_text)
+        workspace.ready.connect(self.workspace_ready.emit)
+        self._replace_workspace(workspace)
+        self.engine_label.setText("THREE.JS 0.186 / OFFICIAL MACRO + MARKET DATA")
+        self.instrument_bar.setText(
+            f"MAP   |   {model.dataset.metric.value}   |   {model.region}   |   "
+            f"{len(model.dataset.available)} COUNTRIES WITH DATA"
+        )
+        self.popout_button.setEnabled(False)
+        QTimer.singleShot(6_000, self.workspace_ready.emit)
+
+    def _mount_data_audit(self, model: object) -> None:
+        workspace = DataAuditWorkspace(model)
+        workspace.command_requested.connect(self.execute_text)
+        self._replace_workspace(workspace)
+        self.engine_label.setText("NATIVE QT / VERIFIED FIELD PROVENANCE")
+        self.instrument_bar.setText(
+            f"{model.symbol}   |   {len(model.entries)} AUDITED FIELDS   |   "
+            "SOURCE + QUALITY + TIMESTAMP + BASIS"
+        )
+        self.popout_button.setEnabled(False)
+        QTimer.singleShot(0, self.workspace_ready.emit)
+
+    def _mount_watchlist(self, model: object) -> None:
+        workspace = WatchlistWorkspace(model)
+        workspace.command_requested.connect(self.execute_text)
+        self._replace_workspace(workspace)
+        self.engine_label.setText("NATIVE QT / EDITABLE WATCHLIST")
+        self.instrument_bar.setText(
+            f"WATC   |   {model.name}   |   {len(model.quotes)} SECURITIES   |   MARKET DATA AUTO"
+        )
+        self.popout_button.setEnabled(False)
+        QTimer.singleShot(0, self.workspace_ready.emit)
+
+    def _mount_portfolio(self, model: object) -> None:
+        workspace = PortfolioWorkspace(model)
+        workspace.command_requested.connect(self.execute_text)
+        self._replace_workspace(workspace)
+        self.engine_label.setText("NATIVE QT / PORTFOLIO ANALYTICS")
+        self.instrument_bar.setText(
+            f"PORT   |   {model.name}   |   {len(model.lines)} POSITIONS   |   "
+            f"VALUE {model.market_value:,.2f} {model.base_currency}   |   P&L {model.profit_loss:+,.2f}"
+        )
+        self.popout_button.setEnabled(False)
+        QTimer.singleShot(0, self.workspace_ready.emit)
+
+    def _mount_alerts(self, model: object) -> None:
+        workspace = AlertsWorkspace(model)
+        workspace.command_requested.connect(self.execute_text)
+        self._replace_workspace(workspace)
+        triggered = sum(1 for item in model.evaluations if item.triggered)
+        self.engine_label.setText("NATIVE QT / MARKET ALERT ENGINE")
+        self.instrument_bar.setText(
+            f"ALRT   |   {len(model.evaluations)} RULES   |   {triggered} TRIGGERED   |   AUTO REFRESH 30S"
+        )
+        self.popout_button.setEnabled(False)
+        QTimer.singleShot(0, self.workspace_ready.emit)
+
+    def _mount_event_calendar(self, model: object) -> None:
+        workspace = EventCalendarWorkspace(model)
+        workspace.command_requested.connect(self.execute_text)
+        self._replace_workspace(workspace)
+        self.engine_label.setText("NATIVE QT / CORPORATE EVENT CALENDAR")
+        self.instrument_bar.setText(
+            f"EVT   |   {model.days} DAYS   |   {len(model.events)} EVENTS   |   "
+            f"PAGE {model.page}   |   {model.total_symbols:,} SECURITIES   |   {model.universe}"
+        )
+        self.popout_button.setEnabled(False)
+        QTimer.singleShot(0, self.workspace_ready.emit)
+
+    def _mount_updates(self, model: object) -> None:
+        workspace = UpdateWorkspace(tuple(model))
+        workspace.command_requested.connect(self.execute_text)
+        self._replace_workspace(workspace)
+        self.engine_label.setText("LOCAL RELEASE MANAGER / SHA-256")
+        self.instrument_bar.setText(
+            f"UPD   |   {len(model)} LOCAL BETA RELEASES   |   SIDE-BY-SIDE INSTALL / ROLLBACK"
+        )
+        self.popout_button.setEnabled(False)
+        QTimer.singleShot(0, self.workspace_ready.emit)
+
+    def _show_workspace_manager(self) -> None:
+        history = tuple(route.raw for route in self._history if route.raw and route.kind != "workspaces")
+        geometry = bytes(self.saveGeometry().toBase64()).decode("ascii")
+        workspace = WorkspaceManagerWorkspace(
+            self.workspace_store,
+            history[-1] if history else "HOME",
+            self.current_symbol,
+            history,
+            geometry,
+        )
+        workspace.command_requested.connect(self.execute_text)
+        workspace.workspace_selected.connect(self._restore_saved_workspace)
+        self._replace_workspace(workspace)
+        self.engine_label.setText("NATIVE QT / PERSISTENT WORKSPACES")
+        self.instrument_bar.setText("WSP   |   SAVE OR RESTORE TERMINAL CONTEXT")
+        self.popout_button.setEnabled(False)
+        QTimer.singleShot(0, self.workspace_ready.emit)
+
+    @Slot(object)
+    def _restore_saved_workspace(self, snapshot: object) -> None:
+        if not isinstance(snapshot, WorkspaceSnapshot):
+            return
+        geometry = restore_workspace_geometry(snapshot)
+        if not geometry.isEmpty():
+            self.restoreGeometry(geometry)
+        self.current_symbol = snapshot.current_symbol
+        restored = [resolve_desktop_command(raw, self.current_symbol) for raw in snapshot.history]
+        self._history = restored or [DesktopRoute("home", self.current_symbol, raw="HOME")]
+        self._history_index = len(self._history) - 1
+        self._update_navigation()
+        self.execute_text(snapshot.active_command, record_history=False)
+
+    def _mount_ovdv(self, model: object) -> None:
+        workspace = VolatilitySurfaceWorkspace(model)
+        workspace.title.hide()
+        workspace.refresh_requested.connect(lambda symbol: self.execute_text(f"OVDV {symbol}"))
+        self._replace_workspace(workspace)
+        self.engine_label.setText("PYVISTA 0.49 / VTK 9.7 / NATIVE INTERACTOR")
+        self.instrument_bar.setText(
+            f"{model.symbol}   {model.spot:,.4f} {model.currency}   |   R {model.rate * 100:.3f}%   |   "
+            f"DIV {model.dividend_yield * 100:.3f}%   |   {len(model.expiries)} REAL EXPIRIES   |   "
+            f"{model.source} {model.status}"
+        )
+        self.popout_button.setEnabled(True)
+        QTimer.singleShot(800, self.workspace_ready.emit)
+
+    def _mount_options(self, model: object) -> None:
+        if not isinstance(model, OptionsDesktopLoad):
+            raise TypeError("Options loader returned an invalid result")
+        workspace = OptionsDesktopWorkspace(model)
+        workspace.command_requested.connect(self.execute_text)
+        self._replace_workspace(workspace)
+        self.engine_label.setText("NATIVE QT / LISTED OPTIONS")
+        chain = model.chain
+        expiry = chain.selected_expiry.isoformat() if chain.selected_expiry else "--"
+        self.instrument_bar.setText(
+            f"{chain.symbol}   SPOT {_number(chain.spot, 4)} {chain.currency or '--'}   |   "
+            f"EXP {expiry}   |   {len(chain.calls)} CALLS   {len(chain.puts)} PUTS   |   "
+            f"{chain.provider} {str(chain.quality).upper()}"
+        )
+        self.popout_button.setEnabled(False)
+        QTimer.singleShot(0, self.workspace_ready.emit)
+
+    def _mount_description(self, model: object) -> None:
+        workspace = SecurityDescriptionWorkspace(model)
+        workspace.command_requested.connect(self.execute_text)
+        if self._pending_methodology_symbol == model.quote.symbol and hasattr(workspace, "rate_tabs"):
+            workspace.rate_tabs.setCurrentIndex(1)
+            self._pending_methodology_symbol = None
+        self._replace_workspace(workspace)
+        self.engine_label.setText("NATIVE QT SECURITY DESCRIPTION")
+        self._update_quote_instrument(model.quote)
+        self.popout_button.setEnabled(False)
+        QTimer.singleShot(0, self.workspace_ready.emit)
+
+    def _mount_financial_analysis(self, model: object) -> None:
+        workspace = FinancialAnalysisWorkspace(model)
+        workspace.command_requested.connect(self.execute_text)
+        self._replace_workspace(workspace)
+        self.engine_label.setText("NATIVE QT FINANCIAL ANALYSIS")
+        self.instrument_bar.setText(
+            f"{model.symbol}   |   {model.name.upper()}   |   {model.currency or '--'}   |   "
+            f"{model.provider} {model.quality}"
+        )
+        self.popout_button.setEnabled(False)
+        QTimer.singleShot(0, self.workspace_ready.emit)
+
+    def _mount_financial_statement(self, model: object) -> None:
+        workspace = FinancialStatementsWorkspace(model)
+        workspace.command_requested.connect(self.execute_text)
+        self._replace_workspace(workspace)
+        self.engine_label.setText("NATIVE QT FINANCIAL STATEMENTS")
+        self.instrument_bar.setText(
+            f"{model.symbol}   |   {model.name.upper()}   |   {model.currency or '--'}   |   "
+            f"{model.provider} {model.quality}"
+        )
+        self.popout_button.setEnabled(False)
+        QTimer.singleShot(0, self.workspace_ready.emit)
+
+    def _mount_financial_export(self, model: object) -> None:
+        workspace = FinancialExportWorkspace(model)
+        self._replace_workspace(workspace)
+        self.engine_label.setText("OPENPYXL / XLSX EXPORT COMPLETE")
+        self.instrument_bar.setText(
+            f"{model.symbol}   |   WORKBOOK SAVED   |   {model.path}"
+        )
+        self.popout_button.setEnabled(False)
+        QTimer.singleShot(0, self.workspace_ready.emit)
+
+    def _mount_research(self, loaded: object) -> None:
+        if not isinstance(loaded, ResearchLoad):
+            raise TypeError("Research loader returned an invalid result")
+        active = loaded.active_function
+        if active == "RV":
+            workspace = RelativeValuationWorkspace(loaded.model)
+        elif active == "EE":
+            workspace = EstimatesWorkspace(loaded.model)
+        elif active == "ANR":
+            workspace = AnalystWorkspace(loaded.model)
+        elif active == "DVD":
+            workspace = DividendsWorkspace(loaded.model)
+        elif active == "EVT":
+            workspace = EventsWorkspace(self.current_route.target, loaded.model)
+        elif active in {"FILINGS", "10K", "10Q"}:
+            workspace = FilingsWorkspace(loaded.model, active)
+        elif active == "EQS":
+            workspace = ScreenerWorkspace(loaded.model)
+        else:
+            raise TypeError(f"Unsupported research workspace: {active}")
+        workspace.command_requested.connect(self.execute_text)
+        self._replace_workspace(workspace)
+        self.engine_label.setText(f"NATIVE QT / {active} STRUCTURED DATA")
+        if loaded.quote is not None:
+            self._update_quote_instrument(loaded.quote)
+        self.popout_button.setEnabled(False)
+        QTimer.singleShot(0, self.workspace_ready.emit)
+
+    def _mount_classic(self, snapshot: object) -> None:
+        if not isinstance(snapshot, ClassicSnapshot):
+            raise TypeError("Classic renderer returned an invalid snapshot")
+        page = QFrame()
+        page.setObjectName("terminalPanel")
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(0, 0, 0, 0)
+        view = _InteractiveSvgWidget(snapshot.actions, snapshot.columns, snapshot.rows)
+        view.load(QByteArray(snapshot.svg.encode("utf-8")))
+        view.renderer().setAspectRatioMode(Qt.AspectRatioMode.IgnoreAspectRatio)
+        view.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        view.action_triggered.connect(self._run_classic_action)
+        layout.addWidget(view)
+        page._ajax_svg = view
+        self._replace_workspace(page)
+        self.engine_label.setText("TEXTUAL / RICH EMBEDDED")
+        self.popout_button.setEnabled(False)
+        if snapshot.quote is not None and self._is_security_context(self.current_route):
+            self._update_quote_instrument(snapshot.quote)
+        QTimer.singleShot(0, self.workspace_ready.emit)
+
+    @Slot(str)
+    def _run_classic_action(self, action: str) -> None:
+        if action == "app.focus_command":
+            self.command.setFocus()
+            return
+        handlers = (
+            ("app.run_command", lambda value: self.execute_text(str(value))),
+            ("app.open_instrument", lambda value: self.execute_text(f"DES {value}")),
+            ("app.open_methodology", self._open_methodology),
+            ("app.open_url", open_external_url),
+            ("app.open_export", open_local_path),
+        )
+        for prefix, callback in handlers:
+            if not action.startswith(f"{prefix}(") or not action.endswith(")"):
+                continue
+            try:
+                value = ast.literal_eval(action[len(prefix) + 1 : -1])
+            except (SyntaxError, ValueError):
+                return
+            callback(value)
+            return
+
+    def _open_methodology(self, symbol: object) -> None:
+        clean_symbol = str(symbol).strip().upper()
+        if not _SYMBOL_RE.fullmatch(clean_symbol):
+            return
+        self._pending_methodology_symbol = clean_symbol
+        self.execute_text(f"DES {clean_symbol}")
+
+    def _replace_workspace(self, widget: QWidget) -> None:
+        old = self.stack.currentWidget()
+        self.stack.addWidget(widget)
+        self.stack.setCurrentWidget(widget)
+        if old is not None:
+            self.stack.removeWidget(old)
+            self._dispose_workspace(old)
+
+    def _dispose_workspace(self, widget: QWidget) -> None:
+        controller = getattr(widget, "_ajax_controller", widget)
+        stream = getattr(controller, "stream", None)
+        if stream is not None:
+            stream.stop()
+        surface_view = getattr(controller, "surface_view", None)
+        if surface_view is not None:
+            surface_view.close()
+        widget.close()
+        widget.deleteLater()
+        if controller is not widget:
+            controller.close()
+            controller.deleteLater()
+
+    def _show_home(self) -> None:
+        columns = max(120, self.stack.width() // 10)
+        rows = max(34, self.stack.height() // 20)
+        self._load_workspace(
+            "MARKET MONITOR",
+            lambda: render_classic_snapshot(
+                "HOME",
+                self.social_service,
+                columns=columns,
+                rows=rows,
+            ),
+            self._mount_classic,
+        )
+
+    def _show_security_function_menu(self, symbol: str) -> None:
+        registered = self.registry.get(symbol)
+        stored_name, stored_type = self._security_directory.get(symbol, ("", ""))
+        name = stored_name or (registered.name if registered is not None else symbol)
+        security_type = stored_type or (str(registered.asset_class) if registered is not None else "EQUITY")
+        currency = registered.currency if registered is not None else ""
+        menu = _SecurityFunctionMenu(symbol, name, security_type, currency)
+        menu.command_requested.connect(self.execute_text)
+        self._replace_workspace(menu)
+        self.engine_label.setText(f"FUNCTION DIRECTORY / {security_type}")
+        self.instrument_bar.setText(
+            f"{symbol}   |   {name.upper()}   |   {security_type}   |   SELECT FUNCTION"
+        )
+        self.popout_button.setEnabled(False)
+        QTimer.singleShot(0, self.workspace_ready.emit)
+
+    def _show_security_settings(self, symbol: str) -> None:
+        registered = self.registry.get(symbol)
+        stored_name, stored_type = self._security_directory.get(symbol, ("", ""))
+        name = stored_name or (registered.name if registered is not None else symbol)
+        security_type = stored_type or (str(registered.asset_class) if registered is not None else "EQUITY")
+        provider_names = [
+            str(getattr(provider, "name", provider.__class__.__name__)).upper()
+            for provider in self.market_service.market_providers
+        ]
+        live_feed = "FINNHUB ENABLED" if any("FINNHUB" in name for name in provider_names) else "DELAYED / OFFICIAL SOURCES"
+        social_status = "SIGNED IN" if self.social_service.signed_in else (
+            "CONFIGURED" if self.social_service.configured else "NOT CONFIGURED"
+        )
+
+        page = QFrame()
+        page.setObjectName("securitySettings")
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(36, 28, 36, 28)
+        layout.setSpacing(12)
+
+        heading = QLabel(f"SECURITY SETTINGS / {symbol}")
+        heading.setStyleSheet(f"color:{AJAX_AMBER};font-size:18px;font-weight:bold")
+        identity = QLabel(f"{name.upper()}  |  {security_type.upper()}")
+        identity.setStyleSheet(f"color:{AJAX_TEXT};font-size:14px")
+        layout.addWidget(heading)
+        layout.addWidget(identity)
+
+        status = QFrame()
+        status.setObjectName("terminalPanel")
+        grid = QGridLayout(status)
+        grid.setContentsMargins(16, 14, 16, 14)
+        grid.setHorizontalSpacing(28)
+        grid.setVerticalSpacing(10)
+        settings_rows = (
+            ("ACTIVE SECURITY", symbol),
+            ("MARKET DATA", " | ".join(provider_names) or "NOT CONFIGURED"),
+            ("LIVE EQUITY FEED", live_feed),
+            ("SOCIAL SERVER", social_status),
+            ("DATA POLICY", "OBSERVED | CACHED | EXPLICITLY MARKED ESTIMATES"),
+        )
+        for row, (label, value) in enumerate(settings_rows):
+            field = QLabel(label)
+            field.setStyleSheet(f"color:{AJAX_MUTED};font-weight:bold")
+            content = QLabel(value)
+            content.setWordWrap(True)
+            content.setStyleSheet(f"color:{AJAX_TEXT}")
+            grid.addWidget(field, row, 0, Qt.AlignmentFlag.AlignTop)
+            grid.addWidget(content, row, 1)
+        grid.setColumnStretch(1, 1)
+        layout.addWidget(status)
+
+        actions = QHBoxLayout()
+        actions.setSpacing(4)
+        actions.addWidget(_button("DES  SECURITY DESCRIPTION", lambda: self.execute_text(f"{symbol} DES")))
+        actions.addWidget(_button("91  FUNCTION DIRECTORY", lambda: self.execute_text(symbol)))
+        actions.addWidget(_button("SOCIAL CONNECTION", self._open_social_settings))
+        actions.addStretch(1)
+        layout.addLayout(actions)
+        layout.addStretch(1)
+
+        self._replace_workspace(page)
+        self.engine_label.setText("NATIVE QT / SECURITY SETTINGS")
+        self.instrument_bar.setText(
+            f"{symbol}   |   {name.upper()}   |   {security_type.upper()}   |   SETTINGS"
+        )
+        self.popout_button.setEnabled(False)
+        QTimer.singleShot(0, self.workspace_ready.emit)
+
+    def _open_social_settings(self) -> None:
+        self.workspace_tabs.setCurrentIndex(1)
+        self.social_workspace.activate()
+
+    def _show_data_connections(self) -> None:
+        dialog = _DataConnectionsDialog(self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        self.market_service = MarketService()
+        self.registry = self.market_service.registry
+        self._show_message(
+            "DATA CONNECTIONS SAVED",
+            "ENCRYPTED FOR THE CURRENT WINDOWS USER / NEW PROVIDERS ARE ACTIVE",
+        )
+
+    def _function_bar_link(self, link: str) -> None:
+        action, separator, raw_symbol = link.partition(":")
+        symbol = raw_symbol.strip().upper()
+        if not separator or not _SYMBOL_RE.fullmatch(symbol):
+            return
+        if action == "asset":
+            self.execute_text(f"{symbol} DES")
+        elif action == "actions":
+            self.execute_text(symbol)
+        elif action == "settings":
+            self._show_security_settings(symbol)
+
+    def _is_security_context(self, route: DesktopRoute, parsed=None) -> bool:
+        if route.kind in _SECURITY_ROUTE_KINDS:
+            return True
+        if route.kind != "terminal":
+            return False
+        parsed = parsed or parse_command(route.raw)
+        if parsed.action not in SECURITY_FUNCTIONS or not parsed.target:
+            return False
+        if parsed.action != CommandAction.NEWS:
+            return True
+        target = route.target.upper()
+        return (
+            target == self.current_symbol
+            or self.registry.get(target) is not None
+            or target in self._security_directory
+        )
+
+    def _show_message(
+        self,
+        title: str,
+        detail: str,
+        *,
+        error: bool = False,
+        ready: bool = True,
+    ) -> None:
+        page = QFrame()
+        page.setObjectName("emptyWorkspace")
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(36, 30, 36, 30)
+        heading = QLabel(title)
+        heading.setStyleSheet(
+            f"color:{AJAX_RED if error else AJAX_AMBER};font-size:18px;font-weight:bold"
+        )
+        detail_label = QLabel(detail)
+        detail_label.setWordWrap(True)
+        detail_label.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
+        detail_label.setStyleSheet(f"color:{AJAX_MUTED};font-size:13px")
+        layout.addWidget(heading)
+        layout.addSpacing(12)
+        layout.addWidget(detail_label)
+        layout.addStretch(1)
+        self._replace_workspace(page)
+        if ready:
+            QTimer.singleShot(0, self.workspace_ready.emit)
+
+    def pop_out(self) -> None:
+        route = self.current_route
+        try:
+            if route.kind == "price":
+                launch_price_chart(route.target, route.period or "1Y", route.interval)
+            elif route.kind == "curve":
+                launch_curve_chart(route.target)
+            elif route.kind == "ovdv":
+                launch_volatility_surface(route.target)
+            else:
+                return
+        except ChartRuntimeError as exc:
+            self.statusBar().showMessage(str(exc))
+            return
+        self.statusBar().showMessage(f"POP OUT STARTED: {route.raw}")
+
+    def _set_route_labels(self, route: DesktopRoute) -> None:
+        parsed = parse_command(route.raw)
+        command_name = parsed.action.value if parsed.action != CommandAction.UNKNOWN else route.raw
+        labels = {
+            "home": "MARKETS  |  PROFESSIONAL WORKSPACE",
+            "security-required": f"SELECT SECURITY  |  {route.raw}",
+            "select": f"{route.target}  |  SECURITY SELECTED",
+            "price": f"GP  |  {route.target}  |  PRICE CHART",
+            "curve": f"CURVE  |  {route.target}  |  YIELD CURVE",
+            "macro-map": f"MAP  |  GLOBAL ECONOMIC MAP  |  {route.target}",
+            "watchlist": "WATC  |  EDITABLE WATCHLISTS",
+            "portfolio": "PORT  |  PORTFOLIO MANAGER",
+            "alerts": "ALRT  |  MARKET ALERTS",
+            "workspaces": "WSP  |  PERSISTENT WORKSPACES",
+            "updates": "UPD  |  BETA RELEASE MANAGER",
+            "ovdv": f"OVDV  |  {route.target}  |  IMPLIED VOLATILITY SURFACE",
+            "option-monitor": f"OMON  |  {route.target}  |  OPTION MONITOR",
+            "option-valuation": f"OVME  |  {route.target}  |  OPTION VALUATION",
+            "description": f"DES  |  {route.target}  |  SECURITY DESCRIPTION",
+            "data-audit": f"FLDS  |  {route.target}  |  FIELD PROVENANCE",
+            "financial-analysis": f"FA  |  {route.target}  |  FINANCIAL ANALYSIS",
+            "financial-income": f"IS  |  {route.target}  |  INCOME STATEMENT",
+            "financial-balance": f"BS  |  {route.target}  |  BALANCE SHEET",
+            "financial-cashflow": f"CF  |  {route.target}  |  CASH FLOW STATEMENT",
+            "financial-export": f"XLS  |  {route.target}  |  FINANCIAL EXPORT",
+            "relative-valuation": f"RV  |  {route.target}  |  RELATIVE VALUATION",
+            "estimates": f"EE  |  {route.target}  |  CONSENSUS ESTIMATES",
+            "analyst": f"ANR  |  {route.target}  |  ANALYST RECOMMENDATIONS",
+            "dividends": f"DVD  |  {route.target}  |  DIVIDEND ANALYSIS",
+            "events": f"EVT  |  {route.target}  |  CORPORATE EVENTS",
+            "event-calendar": "EVT  |  CORPORATE CALENDAR",
+            "filings": f"FILINGS  |  {route.target}  |  REGULATORY REPORTS",
+            "filings-10k": f"10K  |  {route.target}  |  ANNUAL FILINGS",
+            "filings-10q": f"10Q  |  {route.target}  |  QUARTERLY FILINGS",
+            "screener": "EQS  |  EQUITY SCREENING",
+            "social": "SOCIAL  |  CONTACTS  |  MESSAGING",
+            "terminal": f"{command_name}  |  {route.target}",
+        }
+        title = labels.get(route.kind, route.raw)
+        if self._is_security_context(route, parsed):
+            security = route.target
+            registered = self.registry.get(security)
+            _name, stored_type = self._security_directory.get(security, ("", ""))
+            security_type = stored_type or (str(registered.asset_class) if registered is not None else "EQUITY")
+            safe_security = html.escape(security)
+            safe_type = html.escape(security_type.title())
+            safe_title = html.escape(title)
+            self.function_bar.setText(
+                f"<span style='background:#d99116;color:#050505'> {safe_security} {safe_type} </span>"
+                f"&nbsp;&nbsp;<a style='color:#ffffff;text-decoration:none' href='asset:{safe_security}'>90) Asset</a>"
+                f"&nbsp;&nbsp;&nbsp;<a style='color:#ffffff;text-decoration:none' href='actions:{safe_security}'>91) Actions</a>"
+                f"&nbsp;&nbsp;&nbsp;<a style='color:#ffffff;text-decoration:none' href='settings:{safe_security}'>92) Settings</a>"
+                f"&nbsp;&nbsp;&nbsp;{safe_title}"
+            )
+        else:
+            self.function_bar.setText(html.escape(title))
+        if self.current_symbol:
+            self.instrument_bar.setText(
+                f"{self.current_symbol}   |   ACTIVE SECURITY   |   FUNCTION {route.kind.upper()}"
+            )
+        else:
+            self.instrument_bar.setText(
+                "NO ACTIVE SECURITY   |   ENTER NAME OR TICKER   |   THEN FUNCTION <GO>"
+            )
+
+    @Slot(object)
+    def _update_quote_instrument(self, quote: object) -> None:
+        price = getattr(quote, "price", None)
+        change = getattr(quote, "change", None)
+        percent = getattr(quote, "change_percent", None)
+        currency = getattr(quote, "currency", "")
+        bid = getattr(quote, "bid", None)
+        ask = getattr(quote, "ask", None)
+        high = getattr(quote, "day_high", None)
+        low = getattr(quote, "day_low", None)
+        volume = getattr(quote, "volume", None)
+        color = "#62e600" if change is not None and change >= 0 else "#ff315f"
+        self.instrument_bar.setText(
+            f"{getattr(quote, 'symbol', self.current_symbol)}   {_number(price, 4)} {currency}   |   "
+            f"<span style='color:{color}'>{_signed(change, 4)} / {_signed(percent, 2)}%</span>   |   "
+            f"BID {_number(bid, 4)}   ASK {_number(ask, 4)}   |   "
+            f"H {_number(high, 4)}   L {_number(low, 4)}   |   VOL {_number(volume, 0)}"
+        )
+
+    @Slot(object)
+    def _update_price_instrument(self, model: object) -> None:
+        if not model.points:
+            return
+        last = model.points[-1]
+        previous = model.points[-2].close if len(model.points) > 1 else last.close
+        change = last.close - previous
+        percent = change / previous * 100.0 if previous else 0.0
+        color = "#62e600" if change >= 0 else "#ff315f"
+        volume = f"{last.volume:,.0f}" if last.volume is not None else "--"
+        self.instrument_bar.setText(
+            f"{model.symbol}   {last.close:,.4f} {model.currency}   |   "
+            f"<span style='color:{color}'>{change:+,.4f} / {percent:+.2f}%</span>   |   "
+            f"O {last.open:,.4f}   H {last.high:,.4f}   L {last.low:,.4f}   |   "
+            f"VOL {volume}"
+        )
+
+    def _update_clock(self) -> None:
+        local = datetime.now().astimezone()
+        utc = datetime.now(timezone.utc)
+        offset_hours = (local.utcoffset().total_seconds() / 3_600) if local.utcoffset() else 0
+        local_zone = "CEST" if offset_hours == 2 else "CET" if offset_hours == 1 else local.tzname() or "LOCAL"
+        self.local_clock.setText(f"{local:%H:%M:%S} {local_zone}")
+        self.utc_clock.setText(utc.strftime("UTC %H:%M:%S"))
+
+    def closeEvent(self, event) -> None:  # noqa: N802 - Qt callback
+        self._persist_session_state()
+        if self._session_persistence_enabled:
+            self.settings.setValue("session/clean_shutdown", True)
+            self.settings.sync()
+        self._load_serial += 1
+        self._suggestion_serial += 1
+        self._suggestion_timer.stop()
+        for worker in tuple(self._suggestion_workers):
+            if worker.isRunning():
+                worker.requestInterruption()
+                worker.wait(2_000)
+        for worker in tuple(self._workspace_loaders):
+            if worker.isRunning():
+                worker.requestInterruption()
+                worker.wait()
+        if self._auth_worker is not None and self._auth_worker.isRunning():
+            self._auth_worker.requestInterruption()
+            self._auth_worker.wait(2_000)
+        if self._logout_worker is not None and self._logout_worker.isRunning():
+            self._logout_worker.requestInterruption()
+            self._logout_worker.wait(2_000)
+        if self._startup_manager is not None:
+            self._startup_manager.stop()
+        social_worker = getattr(self.social_workspace, "_worker", None)
+        if social_worker is not None and social_worker.isRunning():
+            social_worker.requestInterruption()
+            social_worker.wait(2_000)
+        current = self.stack.currentWidget()
+        if current is not None:
+            self._dispose_workspace(current)
+        super().closeEvent(event)
+
+
+def _button(label: str, callback: Callable[[], None]) -> QPushButton:
+    button = QPushButton(label)
+    button.setObjectName("menuButton")
+    button.clicked.connect(callback)
+    button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+    return button
+
+
+def _auth_link(label: str, callback: Callable[[], None]) -> QPushButton:
+    button = QPushButton(label)
+    button.setObjectName("authLink")
+    button.setCursor(Qt.CursorShape.PointingHandCursor)
+    button.clicked.connect(callback)
+    return button
+
+
+def _number(value: float | None, decimals: int) -> str:
+    if value is None:
+        return "--"
+    return f"{value:,.{decimals}f}"
+
+
+def _signed(value: float | None, decimals: int) -> str:
+    if value is None:
+        return "--"
+    return f"{value:+,.{decimals}f}"
+
+
+def run_desktop_app(
+    *,
+    initial_command: str | None = None,
+    screenshot: str | None = None,
+    splash_screenshot: str | None = None,
+) -> int:
+    if importlib.util.find_spec("PySide6") is None:
+        raise RuntimeError("PySide6 is required for the THRIVEBERG professional desktop shell")
+    QApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts, True)
+    app = QApplication.instance() or QApplication(sys.argv[:1])
+    app.setApplicationName("THRIVEBERG Terminal")
+    app.setOrganizationName("THRIVEBERG")
+    app.setWindowIcon(thriveberg_icon())
+    font_path = Path(__file__).resolve().parent / "charts" / "assets" / "DejaVuSansMono.ttf"
+    font_id = QFontDatabase.addApplicationFont(str(font_path))
+    if font_id >= 0:
+        families = QFontDatabase.applicationFontFamilies(font_id)
+        if families:
+            app.setFont(QFont(families[0], 10))
+    window = AjaxDesktopWindow(require_login=screenshot is None and splash_screenshot is None)
+    if screenshot or splash_screenshot:
+        window.showMaximized()
+    else:
+        window.show()
+    if splash_screenshot:
+        output = Path(splash_screenshot).resolve()
+        output.parent.mkdir(parents=True, exist_ok=True)
+        captured = False
+
+        def capture_splash(_success: bool = True, _failures: object = ()) -> None:
+            nonlocal captured
+            if captured:
+                return
+            captured = True
+            window.grab().save(str(output))
+            app.quit()
+
+        window._authenticated = True
+        window._begin_boot_sequence(None)
+        window.showNormal()
+        window.resize(1920, 1080)
+        if window._startup_manager is not None:
+            window._startup_manager.startup_completed.connect(
+                lambda success, failures: QTimer.singleShot(
+                    80, lambda: capture_splash(success, failures)
+                )
+            )
+        QTimer.singleShot(15_000, capture_splash)
+        return app.exec()
+    if screenshot:
+        output = Path(screenshot).resolve()
+        output.parent.mkdir(parents=True, exist_ok=True)
+        captured = False
+        expected_kind = (
+            resolve_desktop_command(initial_command).kind if initial_command else window.current_route.kind
+        )
+
+        def capture() -> None:
+            nonlocal captured
+            if captured:
+                return
+            captured = True
+            current = window.stack.currentWidget()
+            surface_view = getattr(current, "surface_view", None)
+            if surface_view is not None:
+                viewport = output.with_name(f"{output.stem}-vtk{output.suffix}")
+                surface_view.render()
+                surface_view.screenshot(str(viewport))
+            window.grab().save(str(output))
+            app.quit()
+
+        def workspace_ready() -> None:
+            if window.current_route.kind == expected_kind:
+                QTimer.singleShot(2_500, capture)
+
+        window.workspace_ready.connect(workspace_ready)
+        QTimer.singleShot(20_000, capture)
+    window.start(initial_command)
+    return app.exec()

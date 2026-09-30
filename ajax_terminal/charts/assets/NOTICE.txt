@@ -1,0 +1,21 @@
+THRIVEBERG Terminal chart components
+
+TradingView Lightweight Charts 5.2.1
+Copyright (c) 2025 TradingView, Inc.
+Licensed under the Apache License 2.0.
+The price-chart UI retains the required visible "Charts by TradingView"
+attribution and link to https://www.tradingview.com/.
+
+Apache ECharts 6.1.0
+Copyright (c) 2017-2026 The Apache Software Foundation.
+Licensed under the Apache License 2.0.
+
+Three.js r186
+Copyright (c) 2010-2026 Three.js Authors.
+Licensed under the MIT License.
+
+Full upstream license and notice files are distributed beside these assets.
+
+DejaVu Sans Mono
+Copyright (c) 2003 by Bitstream, Inc. and contributors.
+Distributed under the DejaVu font license included beside the font asset.

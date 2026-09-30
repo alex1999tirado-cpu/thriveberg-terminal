@@ -1,0 +1,41 @@
+name: Quality and security
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: quality-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      PYTHONDONTWRITEBYTECODE: "1"
+      QT_QPA_PLATFORM: offscreen
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install development dependencies
+        run: python -m pip install --upgrade pip ".[dev,charts,security]"
+      - name: Run tests
+        run: python -m pytest -p no:cacheprovider
+      - name: Audit dependencies
+        run: python -m pip_audit --local --progress-spinner off
+      - name: Check for newly introduced secrets
+        shell: pwsh
+        run: |
+          $files = git ls-files
+          detect-secrets-hook --baseline .secrets.baseline $files
+      - name: Run static security analysis
+        run: python -m bandit -c pyproject.toml -r ajax_terminal tools -ll

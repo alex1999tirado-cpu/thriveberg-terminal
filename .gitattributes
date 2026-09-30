@@ -1,0 +1,19 @@
+* text=auto
+
+*.py text eol=lf
+*.toml text eol=lf
+*.md text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.json text eol=lf
+*.sql text eol=lf
+*.ps1 text eol=lf
+*.spec text eol=lf
+
+*.png binary
+*.ico binary
+*.ttf binary
+*.exe binary
+
+# Preserve vendored libraries and license texts exactly as distributed.
+ajax_terminal/charts/assets/** -whitespace
