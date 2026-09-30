@@ -737,16 +737,32 @@ class AjaxDesktopWindow(QMainWindow):
         host_layout.addWidget(self.lifecycle, 1)
         self.setCentralWidget(host)
 
-        QShortcut(QKeySequence("Ctrl+L"), self, activated=self._focus_command)
-        QShortcut(QKeySequence("Ctrl+1"), self, activated=lambda: self.workspace_tabs.setCurrentIndex(0))
-        QShortcut(QKeySequence("Ctrl+2"), self, activated=lambda: self.workspace_tabs.setCurrentIndex(1))
-        QShortcut(QKeySequence("Alt+Left"), self, activated=self.go_back)
-        QShortcut(QKeySequence("Alt+Right"), self, activated=self.go_forward)
-        QShortcut(QKeySequence("Alt+L"), self, activated=self.auth_email.setFocus)
-        QShortcut(QKeySequence("Alt+P"), self, activated=self.auth_password.setFocus)
+        self._workspace_shortcuts: list[QShortcut] = []
+        for sequence, callback in (
+            ("Ctrl+L", self._focus_command),
+            ("Ctrl+1", lambda: self.workspace_tabs.setCurrentIndex(0)),
+            ("Ctrl+2", lambda: self.workspace_tabs.setCurrentIndex(1)),
+            ("Alt+Left", self.go_back),
+            ("Alt+Right", self.go_forward),
+            ("F8", lambda: self.execute_text("GP")),
+            ("F10", lambda: self.execute_text("OVDV")),
+        ):
+            shortcut = QShortcut(QKeySequence(sequence), self.workspace_tabs)
+            shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+            shortcut.activated.connect(callback)
+            self._workspace_shortcuts.append(shortcut)
+
+        self._auth_shortcuts: list[QShortcut] = []
+        for sequence, callback in (
+            ("Alt+L", self.auth_email.setFocus),
+            ("Alt+P", self.auth_password.setFocus),
+        ):
+            shortcut = QShortcut(QKeySequence(sequence), self.auth_page)
+            shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+            shortcut.activated.connect(callback)
+            self._auth_shortcuts.append(shortcut)
+
         QShortcut(QKeySequence("Escape"), self, activated=self._escape_action)
-        QShortcut(QKeySequence("F8"), self, activated=lambda: self.execute_text("GP"))
-        QShortcut(QKeySequence("F10"), self, activated=lambda: self.execute_text("OVDV"))
 
         self.clock_timer = QTimer(self)
         self.clock_timer.setInterval(1_000)

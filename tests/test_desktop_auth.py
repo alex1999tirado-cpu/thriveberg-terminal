@@ -5,7 +5,8 @@ import os
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
-from PySide6.QtCore import QSettings
+from PySide6.QtCore import QEvent, QSettings, Qt
+from PySide6.QtGui import QKeyEvent
 from PySide6.QtWidgets import QApplication
 
 from ajax_terminal.desktop_app import AjaxDesktopWindow
@@ -49,6 +50,28 @@ def test_login_opens_as_a_compact_centered_window(
     assert not window.isMaximized()
     assert abs(window.frameGeometry().center().x() - available.center().x()) <= 1
     assert abs(window.frameGeometry().center().y() - available.center().y()) <= 1
+
+
+def test_login_accepts_at_sign_from_altgr_layouts(
+    window: AjaxDesktopWindow,
+    qt_app: QApplication,
+) -> None:
+    window.show()
+    window._show_login()
+    window.auth_email.clear()
+    window.auth_email.setFocus()
+    qt_app.processEvents()
+
+    modifiers = Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.AltModifier
+    event = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_2, modifiers, "@")
+    QApplication.sendEvent(window.auth_email, event)
+
+    assert window.auth_email.text() == "@"
+    assert all(
+        shortcut.context() == Qt.ShortcutContext.WidgetWithChildrenShortcut
+        and shortcut.parent() is window.workspace_tabs
+        for shortcut in window._workspace_shortcuts
+    )
 
 
 def test_login_rejects_empty_credentials(window: AjaxDesktopWindow) -> None:

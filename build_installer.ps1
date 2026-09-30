@@ -1,6 +1,6 @@
 param(
     [ValidatePattern('^\d{3}$')]
-    [string]$BetaVersion = "010",
+    [string]$BetaVersion = "011",
     [ValidatePattern('^\d+\.\d+\.\d+$')]
     [string]$AppVersion = "0.5.0"
 )

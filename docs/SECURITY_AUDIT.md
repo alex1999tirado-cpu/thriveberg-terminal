@@ -5,13 +5,13 @@ THRIVEBERG Terminal 0.5.0 Beta.
 
 ## Results
 
-- `pytest`: 223 passed.
+- `pytest`: 224 passed.
 - `pip-audit`: no known vulnerable installed dependencies.
 - Bandit: no medium- or high-severity findings after hardening.
 - `detect-secrets`: no private credentials found. Seven reviewed findings are
   the intentionally public Supabase publishable key and synthetic test values.
-- Installer SHA-256: `84696A5880C47C8164B91A77BF61B43C5082CD774ED0B11A3C492ACC0ABF684C`.
-- Microsoft Defender custom scan: zero detections for the Beta 009 installer.
+- Installer SHA-256: `30ADCBF2C32D329DD9FA80090B3B18EEBB24E5020D73ED014724C7EA15699D0C`.
+- Microsoft Defender custom scan: zero detections for the Beta 010 installer.
 - Packaged smoke test: successful 1920x1040 render with non-empty market data.
 
 ## Hardening included
@@ -28,7 +28,7 @@ THRIVEBERG Terminal 0.5.0 Beta.
 
 ## Residual risks
 
-- Beta 009 is not code signed. SHA-256 verification detects modification but
+- Beta 010 is not code signed. SHA-256 verification detects modification but
   does not establish publisher identity.
 - Public market-data endpoints can be delayed, rate limited, changed, or
   unavailable. Quality labels must remain visible and are not a trading SLA.

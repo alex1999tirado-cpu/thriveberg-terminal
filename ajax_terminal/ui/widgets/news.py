@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from rich.text import Text
 from textual import events, on
 from textual.app import ComposeResult
+from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.message import Message
 from textual.widgets import Button, DataTable, Static
@@ -30,8 +31,8 @@ class NewsWorkspace(Vertical):
     BINDINGS = [
         ("r", "refresh_news", "Refresh"),
         ("o", "open_story", "Open story"),
-        ("j", "next_story", "Next story"),
-        ("k", "previous_story", "Previous story"),
+        Binding("j", "next_story", "Next story", priority=True),
+        Binding("k", "previous_story", "Previous story", priority=True),
     ]
 
     class TopicRequested(Message):
@@ -74,12 +75,20 @@ class NewsWorkspace(Vertical):
         table.add_column("SOURCE", width=12, key="source")
         table.add_column("HEADLINE", width=38, key="headline")
         self._select_topic_button()
+        self.call_after_refresh(self.sync_responsive_layout)
 
     def on_resize(self, event: events.Resize) -> None:
+        self.sync_responsive_layout(event.size.width)
+
+    def on_show(self, _event: events.Show) -> None:
+        self.call_after_refresh(self.sync_responsive_layout)
+
+    def sync_responsive_layout(self, width: int | None = None) -> None:
+        available_width = self.size.width if width is None else width
         detail = self.query_one("#news-detail", Static)
-        detail.display = event.size.width >= 105
+        detail.display = available_width >= 105
         for label in ("companies", "tech", "politics"):
-            self.query_one(f"#news-topic-{label}", Button).display = event.size.width >= 92
+            self.query_one(f"#news-topic-{label}", Button).display = available_width >= 92
 
     def set_loading(self, topic: str | None) -> None:
         self.topic = topic

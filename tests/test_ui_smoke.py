@@ -331,7 +331,9 @@ def test_main_screens_render_headless(tmp_path) -> None:
             assert "NEWS | FED" in str(app.query_one("#news-wire", Static).content)
             news_screen = app.query_one("#news-screen", NewsWorkspace)
             news_screen.focus_table()
+            await pilot.pause()
             await pilot.press("j")
+            await pilot.pause()
             assert news_screen.selected_index == 1
             await pilot.click("#news-topic-economy")
             await asyncio.sleep(0.1)
