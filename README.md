@@ -16,6 +16,16 @@ It does not use Bloomberg branding, logos, proprietary typefaces, or protected U
 | --- | --- |
 | ![AAPL security description](screenshots/equity-description.png) | ![AAPL price chart](screenshots/equity-price-chart.png) |
 
+### Listed-options volatility workstation
+
+![AAPL OVDV listed-options volatility workstation](screenshots/ovdv-aapl-surface.png)
+
+OVDV turns real listed-option observations into an interactive implied-volatility surface. The native VTK viewport supports drag rotation, pan and zoom, while the same workspace tracks the term structure, smile/skew and market snapshot.
+
+#### Native 3D surface
+
+![AAPL implied-volatility surface rendered with VTK](screenshots/ovdv-aapl-surface-vtk.png)
+
 ### Global macro map
 
 ![Interactive global macro map with Spain selected](screenshots/global-macro-map.png)
@@ -126,11 +136,11 @@ running it and may still see a Microsoft SmartScreen warning.
   also enforce hostname allowlists.
 - Supabase access is constrained by Auth and row-level security. The bundled
   key is publishable and has no administrative privileges.
-- CI runs 223 tests, `pip-audit`, `detect-secrets`, and Bandit for every change.
+- CI runs 224 tests, `pip-audit`, `detect-secrets`, and Bandit for every change.
 
 See [SECURITY.md](SECURITY.md) for vulnerability reporting and
 [the latest audit](docs/SECURITY_AUDIT.md) for verified results and residual
-risks. Beta 009 is not code signed, so its SHA-256 protects integrity but does
+risks. Beta 010 is not code signed, so its SHA-256 protects integrity but does
 not establish publisher identity.
 
 ## API Configuration

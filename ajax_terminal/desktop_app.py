@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from PySide6.QtCore import QByteArray, QEvent, QPoint, QSettings, QThread, QTimer, Qt, Signal, Slot
-from PySide6.QtGui import QColor, QFont, QFontDatabase, QKeySequence, QShortcut
+from PySide6.QtGui import QColor, QFont, QFontDatabase, QKeySequence, QPainter, QPixmap, QShortcut
 from PySide6.QtSvgWidgets import QSvgWidget
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -2751,12 +2751,21 @@ def run_desktop_app(
                 viewport = output.with_name(f"{output.stem}-vtk{output.suffix}")
                 surface_view.render()
                 surface_view.screenshot(str(viewport))
-            window.grab().save(str(output))
+            frame = window.grab()
+            if surface_view is not None:
+                native_viewport = QPixmap(str(viewport))
+                if not native_viewport.isNull():
+                    position = surface_view.mapTo(window, QPoint(0, 0))
+                    painter = QPainter(frame)
+                    painter.drawPixmap(position, native_viewport)
+                    painter.end()
+            frame.save(str(output))
             app.quit()
 
         def workspace_ready() -> None:
             if window.current_route.kind == expected_kind:
-                QTimer.singleShot(2_500, capture)
+                delay = 6_000 if expected_kind == "ovdv" else 2_500
+                QTimer.singleShot(delay, capture)
 
         window.workspace_ready.connect(workspace_ready)
         QTimer.singleShot(20_000, capture)
