@@ -421,14 +421,14 @@ def test_narrow_layout_prioritizes_main_panel(tmp_path) -> None:
         app = AjaxTerminalApp(market_service=service)
         app.news_service.providers = [MockNewsProvider()]
         app.macro_service.providers = [MockMacroProvider()]
-        async with app.run_test(size=(90, 35)):
+        async with app.run_test(size=(90, 35)) as pilot:
             await asyncio.sleep(0.2)
             assert not app.query_one("#sidebar").display
             assert not app.query_one("#watchlist", Static).display
             assert not app.query_one("#context", Static).display
             assert app.query_one("#main", Static).display
             await app.execute_command(parse_command("GP AAPL 1D 5M"))
-            await asyncio.sleep(0.1)
+            await pilot.pause()
             for row_id in ("#chart-range-row", "#chart-tools-row"):
                 row = app.query_one(row_id)
                 assert all(child.region.right <= row.region.right for child in row.children if child.display)
@@ -436,7 +436,7 @@ def test_narrow_layout_prioritizes_main_panel(tmp_path) -> None:
             assert not app.query_one("#chart-trend").display
             assert app.query_one("#chart-image").size.height >= 10
             await app.execute_command(parse_command("NEWS"))
-            await asyncio.sleep(0.1)
+            await pilot.pause()
             assert app.query_one("#news-screen", NewsWorkspace).display
             assert not app.query_one("#news-detail", Static).display
             assert not app.query_one("#news-topic-companies").display
