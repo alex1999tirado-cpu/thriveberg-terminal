@@ -124,7 +124,7 @@ ajax
 The current beta is distributed as a per-user Windows installer:
 
 ```text
-releases\BETA\THRIVEBERG-Terminal-BETA-010-Setup.exe
+releases\BETA\THRIVEBERG-Terminal-BETA-011-Setup.exe
 ```
 
 It installs THRIVEBERG Terminal under `%LOCALAPPDATA%\Programs`, creates the
@@ -138,13 +138,13 @@ Build the next installer after changing the source with:
 .\build_installer.ps1
 ```
 
-The default build number is `011`, so the preserved Beta 010 installer is never
+The default build number is `012`, so the preserved Beta 011 installer is never
 overwritten accidentally. Pass `-BetaVersion` explicitly for later releases.
 
 The build uses PyInstaller's one-directory layout internally and Inno Setup for
 installation and upgrades. See [`installer/README.md`](installer/README.md).
 Release executables and checksums are intentionally excluded from Git history;
-publish them as GitHub Release assets instead. Beta 010 is not currently code
+publish them as GitHub Release assets instead. Beta 011 is not currently code
 signed, so recipients should verify the accompanying SHA-256 checksum before
 running it and may still see a Microsoft SmartScreen warning.
 
