@@ -151,7 +151,7 @@ class NewsDesktopWorkspace(QWidget):
                     font = QFont(item.font())
                     font.setUnderline(True)
                     item.setFont(font)
-                    item.setToolTip("Open source article")
+                    item.setToolTip("Select for preview; double-click to open source")
                 table.setItem(row, column, item)
         table.cellClicked.connect(self._story_clicked)
         table.cellDoubleClicked.connect(self._open_story)
@@ -188,12 +188,11 @@ class NewsDesktopWorkspace(QWidget):
     def _status_text(self) -> str:
         sources = len({item.source for item in self.items})
         quality = " / ".join(sorted({str(item.quality) for item in self.items})) or "UNAVAILABLE"
-        return f"{len(self.items)} STORIES  |  {sources} SOURCES  |  {quality}  |  CLICK A ROW, USE OPEN STORY, OR PRESS ENTER"
+        return f"{len(self.items)} STORIES  |  {sources} SOURCES  |  {quality}  |  CLICK SELECTS PREVIEW  |  DOUBLE-CLICK / ENTER / OPEN STORY OPENS SOURCE"
 
     @Slot(int, int)
-    def _story_clicked(self, row: int, column: int) -> None:
+    def _story_clicked(self, row: int, _column: int) -> None:
         self._show_story(row)
-        self._open_story(row, column)
 
     def _show_story(self, row: int) -> None:
         if not 0 <= row < len(self.items):

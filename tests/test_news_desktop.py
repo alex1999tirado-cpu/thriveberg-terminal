@@ -15,12 +15,14 @@ from ajax_terminal.models.quote import DataQuality
 from ajax_terminal.news_desktop import NewsDesktopWorkspace, NewsLoad
 
 
-def _story() -> NewsItem:
-    return NewsItem(
+def _story(
+    headline: str = "Corteva announces quarterly results",
+    link: str = "https://example.com/ctva-results",
+) -> NewsItem:    return NewsItem(
         timestamp=datetime(2026, 10, 1, 12, 30, tzinfo=timezone.utc),
         source="TEST WIRE",
-        headline="Corteva announces quarterly results",
-        link="https://example.com/ctva-results",
+        headline=headline,
+        link=link,
         tags=["CTVA", "EARNINGS"],
         summary="Revenue and guidance were published.",
         provider="TEST",
@@ -35,7 +37,37 @@ def test_news_routes_to_native_workspace() -> None:
     assert route.target == "CTVA"
 
 
-def test_clicking_amber_headline_opens_source(monkeypatch) -> None:
+def test_single_click_selects_story_without_opening_source(monkeypatch) -> None:
+    app = QApplication.instance() or QApplication([])
+    opened: list[str] = []
+    monkeypatch.setattr(
+        "ajax_terminal.news_desktop.open_external_url",
+        lambda url: opened.append(str(url)) or True,
+    )
+    second = _story("Corteva names new board member", "https://example.com/ctva-board")
+    workspace = NewsDesktopWorkspace(NewsLoad("CTVA", [_story(), second]))
+    workspace.resize(1200, 700)
+    workspace.show()
+    app.processEvents()
+    try:
+        headline = workspace.table.item(1, 4)
+        rect = workspace.table.visualItemRect(headline)
+        assert rect.isValid()
+        QTest.mouseClick(
+            workspace.table.viewport(),
+            Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier,
+            rect.center(),
+        )
+        app.processEvents()
+        assert opened == []
+        assert workspace._selected_row == 1
+        assert second.headline in workspace.detail.toPlainText()
+    finally:
+        workspace.close()
+
+
+def test_double_clicking_headline_opens_source(monkeypatch) -> None:
     app = QApplication.instance() or QApplication([])
     opened: list[str] = []
     monkeypatch.setattr(
@@ -50,12 +82,7 @@ def test_clicking_amber_headline_opens_source(monkeypatch) -> None:
         headline = workspace.table.item(0, 4)
         rect = workspace.table.visualItemRect(headline)
         assert rect.isValid()
-        QTest.mouseClick(
-            workspace.table.viewport(),
-            Qt.MouseButton.LeftButton,
-            Qt.KeyboardModifier.NoModifier,
-            rect.center(),
-        )
+        workspace.table.cellDoubleClicked.emit(0, 4)
         app.processEvents()
         assert opened == ["https://example.com/ctva-results"]
         assert "SOURCE OPENED" in workspace.status.text()
