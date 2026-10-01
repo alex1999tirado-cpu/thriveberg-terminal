@@ -2,7 +2,7 @@
 
 **THRIVEBERG** - Markets. Data. Analytics.
 
-![THRIVEBERG world equity monitor](screenshots/terminal-markets.png)
+![THRIVEBERG OVDV implied-volatility workstation](screenshots/ovdv-aapl-surface.png)
 
 THRIVEBERG Terminal is a local Python market workstation inspired by the density and speed of professional financial terminals. It uses a black, compact, keyboard-first interface with modular panels, watchlists, command navigation, analytics, and a provider layer designed for public data first and private APIs later.
 
@@ -12,17 +12,37 @@ It does not use Bloomberg branding, logos, proprietary typefaces, or protected U
 
 ## Product tour
 
-| Security description | Interactive price chart |
+### Cross-asset market monitor
+
+![THRIVEBERG world equity monitor](screenshots/terminal-markets.png)
+
+WEI groups major indices by region, carries market status and data quality on every row, and keeps the live watchlist and news context visible beside the market grid.
+
+### Fundamentals and listed options
+
+| Detailed balance sheet | Listed-option chain |
 | --- | --- |
-| ![AAPL security description](screenshots/equity-description.png) | ![AAPL price chart](screenshots/equity-price-chart.png) |
+| ![AAPL detailed balance sheet](screenshots/aapl-balance-sheet.png) | ![AAPL listed-option monitor](screenshots/aapl-option-monitor.png) |
 
-### Listed-options volatility workstation
+### Price discovery and market structure
 
-![AAPL OVDV listed-options volatility workstation](screenshots/ovdv-aapl-surface.png)
+| Interactive price chart | Official USD yield curve |
+| --- | --- |
+| ![AAPL interactive price chart](screenshots/equity-price-chart.png) | ![Official USD Treasury yield curve](screenshots/usd-yield-curve.png) |
+
+### Research workflow
+
+| Security description | Global corporate calendar |
+| --- | --- |
+| ![AAPL security description](screenshots/equity-description.png) | ![Global corporate event calendar](screenshots/global-event-calendar.png) |
+
+| Relative valuation | Live news wire |
+| --- | --- |
+| ![AAPL relative valuation](screenshots/aapl-relative-valuation.png) | ![Live financial news wire](screenshots/live-news-wire.png) |
+
+### Listed-options volatility
 
 OVDV turns real listed-option observations into an interactive implied-volatility surface. The native VTK viewport supports drag rotation, pan and zoom, while the same workspace tracks the term structure, smile/skew and market snapshot.
-
-#### Native 3D surface
 
 ![AAPL implied-volatility surface rendered with VTK](screenshots/ovdv-aapl-surface-vtk.png)
 
@@ -136,7 +156,7 @@ running it and may still see a Microsoft SmartScreen warning.
   also enforce hostname allowlists.
 - Supabase access is constrained by Auth and row-level security. The bundled
   key is publishable and has no administrative privileges.
-- CI runs 224 tests, `pip-audit`, `detect-secrets`, and Bandit for every change.
+- CI runs 225 tests, `pip-audit`, `detect-secrets`, and Bandit for every change.
 
 See [SECURITY.md](SECURITY.md) for vulnerability reporting and
 [the latest audit](docs/SECURITY_AUDIT.md) for verified results and residual

@@ -1,11 +1,11 @@
-# Security audit - 2026-09-30
+# Security audit - 2026-10-01
 
 Scope: source tree prepared for the initial private GitHub publication of
 THRIVEBERG Terminal 0.5.0 Beta.
 
 ## Results
 
-- `pytest`: 224 passed.
+- `pytest`: 225 passed.
 - `pip-audit`: no known vulnerable installed dependencies.
 - Bandit: no medium- or high-severity findings after hardening.
 - `detect-secrets`: no private credentials found. Seven reviewed findings are

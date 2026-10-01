@@ -7,7 +7,8 @@ import sys
 
 def main() -> int:
     _ensure_standard_streams()
-    _configure_terminal_colors()
+    screenshot_mode = "--screenshot" in sys.argv or "--screenshot-splash" in sys.argv
+    _configure_terminal_colors(force=screenshot_mode)
     _migrate_plaintext_settings()
     from ajax_terminal.logging_config import configure_logging
 
@@ -102,10 +103,12 @@ def _ensure_standard_streams() -> None:
             setattr(sys, name, open(os.devnull, "w", encoding="utf-8"))
 
 
-def _configure_terminal_colors() -> None:
+def _configure_terminal_colors(*, force: bool = False) -> None:
     """Undo color-suppression inherited from non-interactive Windows launchers."""
     stdout = sys.stdout
-    if os.name != "nt" or stdout is None or not hasattr(stdout, "isatty") or not stdout.isatty():
+    if os.name != "nt":
+        return
+    if not force and (stdout is None or not hasattr(stdout, "isatty") or not stdout.isatty()):
         return
     os.environ.pop("NO_COLOR", None)
     if os.environ.get("TERM", "").lower() in {"", "dumb"}:

@@ -36,3 +36,21 @@ def test_terminal_color_setup_accepts_windowed_executable_without_stdout(monkeyp
     monkeypatch.setattr(entrypoint.sys, "stdout", None)
 
     entrypoint._configure_terminal_colors()
+
+
+def test_terminal_color_setup_can_force_colors_for_screenshots(monkeypatch) -> None:
+    monkeypatch.setattr(entrypoint.os, "name", "nt")
+    monkeypatch.setattr(entrypoint.sys, "stdout", None)
+    monkeypatch.setenv("NO_COLOR", "1")
+    monkeypatch.setenv("TERM", "dumb")
+    monkeypatch.setenv("COLORTERM", "restore-after-test")
+    monkeypatch.setenv("FORCE_COLOR", "restore-after-test")
+    monkeypatch.delenv("COLORTERM")
+    monkeypatch.delenv("FORCE_COLOR")
+
+    entrypoint._configure_terminal_colors(force=True)
+
+    assert "NO_COLOR" not in entrypoint.os.environ
+    assert entrypoint.os.environ["TERM"] == "xterm-256color"
+    assert entrypoint.os.environ["COLORTERM"] == "truecolor"
+    assert entrypoint.os.environ["FORCE_COLOR"] == "1"
