@@ -61,7 +61,7 @@ def test_main_screens_render_headless(tmp_path) -> None:
         app.news_service.providers = [MockNewsProvider()]
         app.macro_service.providers = [MockMacroProvider()]
         async with app.run_test(size=(160, 45)) as pilot:
-            await asyncio.sleep(0.5)
+            await pilot.pause()
             strip = app.query_one("#instrument-strip")
             sidebar = app.query_one("#sidebar")
             context = app.query_one("#context", Static)
@@ -180,13 +180,13 @@ def test_main_screens_render_headless(tmp_path) -> None:
             ]
             for command, marker in checks:
                 await app.execute_command(parse_command(command))
-                await asyncio.sleep(0.1)
+                await pilot.pause()
                 renderable = app.query_one("#main", Static).content
                 console = Console(width=160, record=True, file=io.StringIO())
                 console.print(renderable)
                 assert marker in console.export_text()
             await app.execute_command(parse_command("CHART AAPL 5D 15M"))
-            await asyncio.sleep(0.1)
+            await pilot.pause()
             chart = app.query_one("#chart-screen", EmbeddedChart)
             assert chart.display
             assert not app.query_one("#main-scroll").display
@@ -234,11 +234,11 @@ def test_main_screens_render_headless(tmp_path) -> None:
             assert chart.show_volume and chart.show_sma and chart.show_ema
             assert not chart.show_vwap
             await pilot.press("7")
-            await asyncio.sleep(0.2)
+            await pilot.pause()
             assert chart.period == "1Y"
             assert chart.interval == "1d"
             await pilot.press("r")
-            await asyncio.sleep(0.2)
+            await pilot.pause()
             assert chart.display and app.query_one("#chart-image").image is not None
             await pilot.press("n")
             await pilot.pause()
@@ -290,7 +290,7 @@ def test_main_screens_render_headless(tmp_path) -> None:
             app.query_one("#main", Static).update(function_strip)
             await pilot.pause()
             assert await pilot.click("#main", offset=(17, 0))
-            await asyncio.sleep(0.1)
+            await pilot.pause()
             assert app.current_command.action == CommandAction.WEI
             function_console = Console(width=160, record=True, file=io.StringIO())
             function_console.print(app.query_one("#main", Static).content)
@@ -303,7 +303,7 @@ def test_main_screens_render_headless(tmp_path) -> None:
             app.query_one("#main", Static).update(instrument_link)
             await pilot.pause()
             assert await pilot.click("#main", offset=(1, 0))
-            await asyncio.sleep(0.1)
+            await pilot.pause()
             assert app.current_command.action == CommandAction.INSTRUMENT
             assert app.current_command.target == "MSFT"
             assert "MSFT Equity" in str(app.query_one("#instrument-function", Static).content)
@@ -336,7 +336,7 @@ def test_main_screens_render_headless(tmp_path) -> None:
             await pilot.pause()
             assert news_screen.selected_index == 1
             await pilot.click("#news-topic-economy")
-            await asyncio.sleep(0.1)
+            await pilot.pause()
             assert app.current_command.args == ("ECONOMY",)
             assert "NEWS | ECONOMY" in str(app.query_one("#news-wire", Static).content)
 
