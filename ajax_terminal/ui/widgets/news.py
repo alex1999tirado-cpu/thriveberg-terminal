@@ -134,6 +134,7 @@ class NewsWorkspace(Vertical):
             f"LEAD {leading} | {quality_label} | UPDATED {now:%H:%M:%S} UTC"
         )
         self._select_topic_button()
+        self.call_after_refresh(self.sync_responsive_layout)
 
     def focus_table(self) -> None:
         self.query_one("#news-table", DataTable).focus()
