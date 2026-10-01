@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 
 from ajax_terminal.models.news import NewsItem, infer_news_category
 from ajax_terminal.models.quote import DataQuality
-from ajax_terminal.providers.news import _parse_rss
+from ajax_terminal.providers.news import _decode_feed, _parse_rss
 from ajax_terminal.services.news_service import NewsService
 from ajax_terminal.storage.cache import SQLiteCache
 
@@ -111,3 +111,8 @@ def test_news_service_uses_cached_real_stories_before_mock(tmp_path) -> None:
 
     assert cached[0].headline == "Cached market story"
     assert cached[0].quality == DataQuality.CACHED
+
+
+def test_news_feed_falls_back_to_windows_encoding_without_replacement_characters() -> None:
+    payload = b"Corteva stock isn\x92t down"
+    assert _decode_feed(payload) == "Corteva stock isn\u2019t down"

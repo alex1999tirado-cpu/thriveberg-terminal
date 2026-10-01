@@ -82,6 +82,7 @@ from ajax_terminal.equity_research_desktop import (
 )
 from ajax_terminal.models.quote import StatementType
 from ajax_terminal.macro_map_desktop import MacroMapLoad, MacroMapWorkspace, load_macro_map
+from ajax_terminal.news_desktop import NewsDesktopWorkspace, NewsLoad, load_news
 from ajax_terminal.options_desktop import (
     OptionsDesktopLoad,
     OptionsDesktopWorkspace,
@@ -202,6 +203,8 @@ def resolve_desktop_command(raw: str, current_symbol: str = "") -> DesktopRoute:
         return DesktopRoute("curve", parsed.target or "USD", raw=clean)
     if parsed.action == CommandAction.MAP:
         return DesktopRoute("macro-map", parsed.target or "WORLD", raw=clean)
+    if parsed.action == CommandAction.NEWS:
+        return DesktopRoute("news", parsed.target, raw=clean)
     if parsed.action == CommandAction.SOCIAL:
         return DesktopRoute("social", current_symbol, raw=clean)
     if parsed.action == CommandAction.WATCH:
@@ -1706,6 +1709,12 @@ class AjaxDesktopWindow(QMainWindow):
                 lambda: load_macro_map(parsed.args),
                 self._mount_macro_map,
             )
+        elif route.kind == "news":
+            self._load_workspace(
+                "NATIVE NEWS WIRE",
+                lambda: load_news(route.target),
+                self._mount_news,
+            )
         elif route.kind == "watchlist":
             self._load_workspace(
                 "NATIVE EDITABLE WATCHLIST",
@@ -2216,6 +2225,21 @@ class AjaxDesktopWindow(QMainWindow):
         self.popout_button.setEnabled(False)
         QTimer.singleShot(0, self.workspace_ready.emit)
 
+    def _mount_news(self, loaded: object) -> None:
+        if not isinstance(loaded, NewsLoad):
+            raise TypeError("News loader returned an invalid result")
+        workspace = NewsDesktopWorkspace(loaded)
+        workspace.command_requested.connect(self.execute_text)
+        self._replace_workspace(workspace)
+        self.engine_label.setText("NATIVE QT / VERIFIED NEWS SOURCES")
+        topic = loaded.topic or "TOP STORIES"
+        sources = len({item.source for item in loaded.items})
+        self.instrument_bar.setText(
+            f"NEWS   |   {topic.upper()}   |   {len(loaded.items)} HEADLINES   |   {sources} SOURCES"
+        )
+        self.popout_button.setEnabled(False)
+        QTimer.singleShot(0, self.workspace_ready.emit)
+
     def _mount_financial_export(self, model: object) -> None:
         workspace = FinancialExportWorkspace(model)
         self._replace_workspace(workspace)
@@ -2454,7 +2478,7 @@ class AjaxDesktopWindow(QMainWindow):
     def _is_security_context(self, route: DesktopRoute, parsed=None) -> bool:
         if route.kind in _SECURITY_ROUTE_KINDS:
             return True
-        if route.kind != "terminal":
+        if route.kind not in {"terminal", "news"}:
             return False
         parsed = parsed or parse_command(route.raw)
         if parsed.action not in SECURITY_FUNCTIONS or not parsed.target:
@@ -2522,6 +2546,7 @@ class AjaxDesktopWindow(QMainWindow):
             "price": f"GP  |  {route.target}  |  PRICE CHART",
             "curve": f"CURVE  |  {route.target}  |  YIELD CURVE",
             "macro-map": f"MAP  |  GLOBAL ECONOMIC MAP  |  {route.target}",
+            "news": f"NEWS  |  {route.target or 'TOP STORIES'}",
             "watchlist": "WATC  |  EDITABLE WATCHLISTS",
             "portfolio": "PORT  |  PORTFOLIO MANAGER",
             "alerts": "ALRT  |  MARKET ALERTS",

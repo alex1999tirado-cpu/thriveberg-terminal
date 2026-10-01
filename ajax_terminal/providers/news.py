@@ -70,9 +70,20 @@ async def _fetch_text(url: str, timeout: int = 8) -> str:
     def _read() -> str:
         request = urllib.request.Request(safe_url, headers={"User-Agent": "THRIVEBERG-Terminal/0.9"})
         with urllib.request.urlopen(request, timeout=timeout) as response:  # nosec B310
-            return response.read().decode("utf-8", errors="replace")
+            return _decode_feed(response.read())
 
     return await asyncio.to_thread(_read)
+
+
+def _decode_feed(payload: bytes) -> str:
+    text = payload.decode("utf-8", errors="replace")
+    if "\ufffd" not in text:
+        return text
+    try:
+        fallback = payload.decode("cp1252")
+    except UnicodeDecodeError:
+        return text
+    return fallback if fallback.count("\ufffd") < text.count("\ufffd") else text
 
 
 def _parse_rss(xml_text: str, provider: str, topic: str | None, limit: int) -> list[NewsItem]:
