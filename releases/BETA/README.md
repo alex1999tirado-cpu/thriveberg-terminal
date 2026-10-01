@@ -2,16 +2,16 @@
 
 This directory contains only the current distributable beta.
 
-## BETA 011
+## BETA 012
 
-- File: `THRIVEBERG-Terminal-BETA-011-Setup.exe`
+- File: `THRIVEBERG-Terminal-BETA-012-Setup.exe`
 - Released: 2026-10-01
 - Status: Current beta / distributable Windows installer
 - Version: 0.5.0 Beta
-- Highlight: native interactive NEWS workspace with clickable headlines, story details, source links, topics, and refresh controls
-- Validation: 231 automated tests, dependency audit, secret scan, static security analysis, packaged `NEWS CTVA` smoke test, checksum verification, and Microsoft Defender scan
-- SHA-256: `E6689747312DDB598892972D87D732C687CD6EDA6B3AC41B26BE9968804F7E94`
+- Highlight: one click selects a headline and updates its preview; double-click, Enter, or OPEN STORY opens the source
+- Validation: 232 automated tests, dependency audit, secret scan, static security analysis, packaged `NEWS CTVA` smoke test, checksum verification, and Microsoft Defender scan
+- SHA-256: `B9B88770F2483D8DA50757D28D9210E420E76DA8018C648485A97E40991F61AD`
 - Security: no private provider credentials are bundled; user-supplied keys are stored with Windows DPAPI.
 
-The next development build is `BETA 012`. Generated installers and checksums
+The next development build is `BETA 013`. Generated installers and checksums
 should be published as GitHub Release assets rather than committed to source.
