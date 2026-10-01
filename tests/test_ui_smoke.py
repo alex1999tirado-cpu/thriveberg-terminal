@@ -241,7 +241,7 @@ def test_main_screens_render_headless(tmp_path) -> None:
             await asyncio.sleep(0.2)
             assert chart.display and app.query_one("#chart-image").image is not None
             await pilot.press("n")
-            await asyncio.sleep(0.2)
+            await pilot.pause()
             assert not chart.display
             assert not app.query_one("#main-scroll").display
             news_screen = app.query_one("#news-screen", NewsWorkspace)
