@@ -30,5 +30,7 @@ dist/
 build/
 releases/**/*.exe
 releases/**/*.sha256
+releases/**/*.update.json
+releases/**/*.update.json.sig
 Thumbs.db
 .DS_Store

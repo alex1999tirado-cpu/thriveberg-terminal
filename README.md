@@ -193,7 +193,7 @@ thriveberg
 The current beta is distributed as a per-user Windows installer:
 
 ```text
-releases\BETA\THRIVEBERG-Terminal-BETA-017-Setup.exe
+releases\BETA\THRIVEBERG-Terminal-BETA-018-Setup.exe
 ```
 
 It installs THRIVEBERG Terminal under `%LOCALAPPDATA%\Programs`, creates the
@@ -207,13 +207,13 @@ Build the next installer after changing the source with:
 .\build_installer.ps1
 ```
 
-The default build number is `018`, so the preserved Beta 017 installer is never
+The default build number is `019`, so the preserved Beta 018 installer is never
 overwritten accidentally. Pass `-BetaVersion` explicitly for later releases.
 
 The build uses PyInstaller's one-directory layout internally and Inno Setup for
 installation and upgrades. See [`installer/README.md`](installer/README.md).
 Release executables, checksums and signed manifests are intentionally excluded
-from source history. Beta 018 introduces a binary-only public update channel:
+from source history. Beta 018 uses a binary-only public update channel:
 `UPD` verifies an Ed25519-signed manifest, signed size and SHA-256 before launching
 an installer, supports interrupted-download resumption, and revalidates cached
 installers before rollback. Windows Authenticode is still pending, so recipients

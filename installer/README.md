@@ -16,15 +16,20 @@ desktop-client identifiers, not privileged credentials; database access remains
 restricted by Supabase Auth and Row Level Security. Secret and `service_role`
 keys must never be added to the installer.
 
-Beta 017 is the current distributable build. Build the next beta from a clean
+Beta 018 is the current distributable build. Build the next beta from a clean
 Git working tree with:
 
 ```powershell
 .\build_installer.ps1
 ```
 
-The script defaults to Beta 018 and application version 0.5.0. Use explicit
+The script defaults to Beta 019 and application version 0.5.0. Use explicit
 parameters for later releases.
+
+Validate an installer with `tools\smoke_installer.ps1`. The script waits for
+Inno Setup to finish before it starts the installed executable; launching the
+application while Setup is still expanding the one-directory bundle can expose
+an incomplete Qt runtime.
 
 The build requires the release signing key at
 `%LOCALAPPDATA%\THRIVEBERG Terminal\release-signing-key.bin`. That private key is

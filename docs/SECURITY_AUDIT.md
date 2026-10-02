@@ -1,25 +1,25 @@
 # Security audit - 2026-10-02
 
-Scope: THRIVEBERG Terminal 0.5.0 Beta 017 source tree, packaged application and
+Scope: THRIVEBERG Terminal 0.5.0 Beta 018 source tree, packaged application and
 Windows installer.
 
 ## Results
 
-- `pytest`: 275 passed.
+- `pytest`: 288 passed.
 - `pip-audit`: no known vulnerable installed dependencies.
 - Bandit: no medium- or high-severity findings after hardening.
 - `detect-secrets`: no new findings in the changed source, test or documentation files.
-- Installer SHA-256: `E1A944F639F1277451FA6658289D1578586AD484FB088CBF0F4D7F388A6543C2`.
-- Packaged executable SHA-256: `A374A816D0A4453CE49A3725DC24954A8E572E560F824E42EDEDEBE9831820A4`.
-- Microsoft Defender custom scans: zero detections for the Beta 017 installer
+- Installer SHA-256: `E0DF035854BE9E47B4B7BD1545862391F6AF87C8C76B7787A671B96CBF594CE4`.
+- Packaged executable SHA-256: `6AB89E9B3FC36FB1931B19559631154F556F775F7D954957A80128CFD7A5477F`.
+- Microsoft Defender custom scans: zero detections for the Beta 018 installer
   and packaged executable.
-- Packaged smoke test: successful `ALRT REFRESH` render at 1920x1080 using an
-  isolated AAPL portfolio and six real-provider alert types. Market,
-  fundamentals, corporate events and portfolio risk triggered once; filings
-  and news initialized their existing feeds without replaying old items.
-  A second refresh preserved exactly four events with zero evaluation errors.
-- Local `UPD` inventory: Beta 017 staged with a verified checksum while six
-  previous beta installers remain available.
+- Packaged and installed smoke tests: successful `DIAG` and `UPD` renders at
+  1920x1080. The installed build reports 0.5.0 Beta 018 and all 11 diagnostic
+  checks pass.
+- The Ed25519 release manifest was verified against the bundled public key. Its
+  signed installer name, byte size and SHA-256 all match the generated setup;
+  tamper, downgrade, path traversal and interrupted-download cases are covered
+  by automated tests.
 
 ## Hardening included
 
@@ -31,15 +31,22 @@ Windows installer.
   writes, preventing duplicate events from concurrent foreground/background
   checks.
 - Alert results from an old authenticated session are ignored after logout.
-- Private settings use per-user Windows DPAPI storage.
+- Private settings use a versioned per-user Windows DPAPI envelope. V1 stores
+  migrate transactionally to V2 with encrypted backup and rollback.
+- Diagnostics export only sanitized metadata and recent redacted log output;
+  database contents, portfolio values and credential values are excluded.
+- Online updates are accepted only from the public binary repository after an
+  Ed25519 signature, exact size and SHA-256 verification. Cached installers are
+  revalidated before launch.
 - Supabase anonymous table access and public function execution are revoked;
   authenticated access remains governed by row-level security.
 - CI repeats tests, dependency audit, secret checks, and Bandit on every change.
 
 ## Residual risks
 
-- Beta 017 is not code signed. SHA-256 verification detects modification but
-  does not establish publisher identity.
+- Beta 018 is not Authenticode signed, so Windows SmartScreen can still warn on
+  the initial installer. The in-app Ed25519 trust root authenticates subsequent
+  THRIVEBERG update manifests independently of GitHub transport.
 - Public market-data endpoints can be delayed, rate limited, changed, or
   unavailable. Quality labels must remain visible and are not a trading SLA.
 - Social-service security depends on deploying the checked-in RLS schema and on
