@@ -144,7 +144,7 @@ its provider and quality state; unavailable observations remain unavailable.
 - Equity research functions for financial analysis, estimates, recommendations, relative valuation, dividends, corporate events, and screening.
 - Native PySide6 chart workstations: TradingView Lightweight Charts for `GP`, Apache ECharts for analytical 2D views, and PyVista/VTK for the interactive `OVDV` volatility surface.
 - Persistent SQLite cache and watchlist storage.
-- Native workstation tools: editable named watchlists (`WATC`); multi-currency portfolio accounting, performance attribution, broker CSV import, historical risk, factor exposure, correlation, stress testing and audited corporate-action adjustments (`PORT`); market alerts (`ALRT`); saved multi-factor screens (`EQS`); and a paged corporate calendar (`EVT ALL`) with watchlist, portfolio, market-cap, industry and geographic filters. Global provider and cache diagnostics (`DQM`), field-level source audit (`FLDS`), persistent workspaces (`WSP`), crash recovery, and a checksum-verified local beta manager (`UPD`) are also included.
+- Native workstation tools: editable named watchlists (`WATC`); multi-currency portfolio accounting, performance attribution, broker CSV import, historical risk, factor exposure, correlation, stress testing and audited corporate-action adjustments (`PORT`); market alerts (`ALRT`); saved multi-factor screens (`EQS`); and a paged corporate calendar (`EVT ALL`) with watchlist, portfolio, market-cap, industry and geographic filters. Global provider and cache diagnostics (`DQM`), field-level source audit (`FLDS`), persistent workspaces (`WSP`), crash recovery, system diagnostics with sanitized support export (`DIAG`), and an Ed25519-signed online beta manager (`UPD`) are also included.
 - Decoupled provider interfaces with cached fallback and explicit unavailable or estimated labels; fictitious market observations are not presented as real data.
 - Analytics for FX forwards, fixed income, Black-Scholes options, volatility, and risk.
 - Supabase-backed user accounts, friend requests, private messages, clickable THRIVEBERG command links, and self-contained friend ZIP export.
@@ -212,33 +212,38 @@ overwritten accidentally. Pass `-BetaVersion` explicitly for later releases.
 
 The build uses PyInstaller's one-directory layout internally and Inno Setup for
 installation and upgrades. See [`installer/README.md`](installer/README.md).
-Release executables and checksums are intentionally excluded from Git history;
-publish them as GitHub Release assets instead. Beta 017 is not currently code
-signed, so recipients should verify the accompanying SHA-256 checksum before
-running it and may still see a Microsoft SmartScreen warning.
+Release executables, checksums and signed manifests are intentionally excluded
+from source history. Beta 018 introduces a binary-only public update channel:
+`UPD` verifies an Ed25519-signed manifest, signed size and SHA-256 before launching
+an installer, supports interrupted-download resumption, and revalidates cached
+installers before rollback. Windows Authenticode is still pending, so recipients
+may continue to see a Microsoft SmartScreen warning.
 
 ## Security and integrity
 
-- Private API keys are excluded from source and installers and are stored with
-  per-user Windows DPAPI encryption.
+- Private API keys are excluded from source and installers and are stored in a
+  versioned per-user Windows DPAPI envelope with atomic V1-to-V2 migration.
 - Provider downloads and external browser links require HTTPS; fixed providers
-  also enforce hostname allowlists.
+  also enforce hostname allowlists. Online updates accept only the public
+  distribution repository and reject unsigned, altered, oversized or downgraded
+  release metadata.
 - Supabase access is constrained by Auth and row-level security. The bundled
   key is publishable and has no administrative privileges.
-- CI runs 275 tests, `pip-audit`, `detect-secrets`, and Bandit for every change.
+- CI runs 288 tests, `pip-audit`, `detect-secrets`, and Bandit for every change.
 
 See [SECURITY.md](SECURITY.md) for vulnerability reporting and
 [the latest audit](docs/SECURITY_AUDIT.md) for verified results and residual
-risks. Beta 017 is not code signed, so its SHA-256 protects integrity but does
-not establish publisher identity.
+risks. The in-app Ed25519 signature authenticates THRIVEBERG update artifacts;
+Authenticode publisher reputation remains a separate future hardening step.
 
 ## API Configuration
 
 In the desktop terminal, open `TOOLS > DATA CONNECTIONS` to configure or remove
 provider credentials. Sensitive settings are encrypted with Windows DPAPI and
 stored in `%LOCALAPPDATA%\THRIVEBERG Terminal\secure-settings.bin`, bound to the
-current Windows user. Recognized values left in a legacy `.env` file are migrated
-to this store and removed from the plaintext file at startup.
+current Windows user. Recognized values left in a legacy `.env` file are migrated,
+verified and removed from the plaintext file at startup. Existing V1 encrypted
+stores are backed up in encrypted form and migrated transactionally.
 
 `.env.example` remains available only as a source-development fallback. Never
 embed personal or privileged API keys in an installer or release archive.
@@ -371,6 +376,7 @@ DQM PROBE
 DQM AAPL
 WSP
 UPD
+DIAG
 ```
 
 `NEWS` opens the top-stories wire. Use `NEWS <ticker>` for instrument headlines or
@@ -535,7 +541,7 @@ Development advances one validated beta milestone at a time:
 3. Portfolio risk, factor exposure, correlation and stress scenarios. Completed in the Beta 015 development cycle.
 4. Corporate actions and automatic position/history adjustments. Completed in the Beta 016 development cycle.
 5. Background alerts for prices, fundamentals, filings, news, events and portfolio risk. Completed in the Beta 017 development cycle.
-6. Signed incremental updates, diagnostics and encrypted configuration migration.
+6. Signed incremental updates, diagnostics and encrypted configuration migration. Completed in the Beta 018 development cycle.
 7. Estimate revisions, earnings surprises, guidance and filing comparison.
 8. Multi-leg options, American/binomial valuation and aggregate Greeks.
 9. Fixed-income cash flows, spread analytics and bootstrapped curves.

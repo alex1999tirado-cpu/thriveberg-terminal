@@ -65,6 +65,7 @@ COMMAND_VISUAL_FAMILY: dict[CommandAction, VisualFamily] = {
     CommandAction.HELP: VisualFamily.SUPPORT,
     CommandAction.WORKSPACES: VisualFamily.SUPPORT,
     CommandAction.UPDATES: VisualFamily.SUPPORT,
+    CommandAction.DIAGNOSTICS: VisualFamily.SUPPORT,
     CommandAction.SEARCH: VisualFamily.SUPPORT,
     CommandAction.UNKNOWN: VisualFamily.SUPPORT,
 }

@@ -7,6 +7,8 @@ import json
 import os
 import sys
 from ctypes import wintypes
+from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from threading import RLock
 from typing import Iterable
@@ -26,13 +28,25 @@ SECRET_SETTING_NAMES = frozenset(
     }
 )
 
-_MAGIC = b"THRIVEBERG-DPAPI-V1\0"
+_MAGIC_V1 = b"THRIVEBERG-DPAPI-V1\0"
+_MAGIC_V2 = b"THRIVEBERG-DPAPI-V2\0"
 _ENTROPY = b"THRIVEBERG Terminal secure settings v1"
 _CRYPTPROTECT_UI_FORBIDDEN = 0x01
 
 
 class SecureSettingsError(RuntimeError):
     pass
+
+
+@dataclass(frozen=True, slots=True)
+class SecureSettingsStatus:
+    path: Path
+    exists: bool
+    format_version: int
+    decryptable: bool
+    configured_names: tuple[str, ...]
+    migrated_from_v1: bool = False
+    error: str = ""
 
 
 def user_data_directory() -> Path:
@@ -83,33 +97,103 @@ class SecureSettings:
         with self._lock:
             return tuple(sorted(self._read()))
 
+    def status(self) -> SecureSettingsStatus:
+        with self._lock:
+            if not self.path.is_file():
+                return SecureSettingsStatus(self.path, False, 2, True, ())
+            try:
+                payload, version = self._decode(self.path.read_bytes())
+                migrated = version == 1
+                if migrated:
+                    self._upgrade_v1(payload)
+                    version = 2
+                return SecureSettingsStatus(
+                    self.path,
+                    True,
+                    version,
+                    True,
+                    tuple(sorted(payload)),
+                    migrated_from_v1=migrated,
+                )
+            except (OSError, SecureSettingsError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+                return SecureSettingsStatus(self.path, True, 0, False, (), error=str(exc))
+
     def _read(self) -> dict[str, str]:
         if not self.path.is_file():
             return {}
         try:
-            raw = self.path.read_bytes()
-            if not raw.startswith(_MAGIC):
-                raise SecureSettingsError("Secure settings file has an unknown format")
-            clear = _unprotect(raw[len(_MAGIC) :])
-            payload = json.loads(clear.decode("utf-8"))
+            payload, version = self._decode(self.path.read_bytes())
         except SecureSettingsError:
             raise
         except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
             raise SecureSettingsError("Secure settings could not be read") from exc
+        if version == 1:
+            self._upgrade_v1(payload)
+        return payload
+
+    def _decode(self, raw: bytes) -> tuple[dict[str, str], int]:
+        if raw.startswith(_MAGIC_V2):
+            clear = _unprotect(raw[len(_MAGIC_V2) :])
+            envelope = json.loads(clear.decode("utf-8"))
+            if not isinstance(envelope, dict) or envelope.get("schema") != 2:
+                raise SecureSettingsError("Secure settings payload is invalid")
+            payload = envelope.get("values")
+            version = 2
+        elif raw.startswith(_MAGIC_V1):
+            clear = _unprotect(raw[len(_MAGIC_V1) :])
+            payload = json.loads(clear.decode("utf-8"))
+            version = 1
+        else:
+            raise SecureSettingsError("Secure settings file has an unknown format")
         if not isinstance(payload, dict):
             raise SecureSettingsError("Secure settings payload is invalid")
-        return {str(key).upper(): str(value) for key, value in payload.items() if value}
+        return (
+            {str(key).upper(): str(value) for key, value in payload.items() if value},
+            version,
+        )
 
     def _write(self, payload: dict[str, str]) -> None:
-        clear = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
-        encoded = _MAGIC + _protect(clear)
+        envelope = {
+            "schema": 2,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+            "values": payload,
+        }
+        clear = json.dumps(envelope, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        encoded = _MAGIC_V2 + _protect(clear)
         temporary = self.path.with_suffix(self.path.suffix + ".tmp")
         try:
             self.path.parent.mkdir(parents=True, exist_ok=True)
-            temporary.write_bytes(encoded)
+            with temporary.open("wb") as handle:
+                handle.write(encoded)
+                handle.flush()
+                os.fsync(handle.fileno())
             temporary.replace(self.path)
         except OSError as exc:
+            temporary.unlink(missing_ok=True)
             raise SecureSettingsError("Secure settings could not be saved") from exc
+
+    def _upgrade_v1(self, payload: dict[str, str]) -> None:
+        original = self.path.read_bytes()
+        backup = self.path.with_suffix(self.path.suffix + ".v1.bak")
+        backup_temp = backup.with_suffix(backup.suffix + ".tmp")
+        try:
+            if not backup.exists():
+                backup_temp.write_bytes(original)
+                backup_temp.replace(backup)
+            self._write(payload)
+            verified, version = self._decode(self.path.read_bytes())
+            if version != 2 or verified != payload:
+                raise SecureSettingsError("Secure settings migration verification failed")
+        except Exception as exc:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            rollback = self.path.with_suffix(self.path.suffix + ".rollback")
+            rollback.write_bytes(original)
+            rollback.replace(self.path)
+            if isinstance(exc, SecureSettingsError):
+                raise
+            raise SecureSettingsError("Secure settings migration failed and was rolled back") from exc
+        finally:
+            backup_temp.unlink(missing_ok=True)
 
 
 def secure_setting(name: str, default: str = "") -> str:
@@ -134,6 +218,7 @@ def migrate_env_file(
     accepted = {name.upper() for name in names}
     target = store or SecureSettings()
     migrated: dict[str, str] = {}
+    recognized = False
     output: list[str] = []
     for raw_line in lines:
         stripped = raw_line.strip()
@@ -146,15 +231,26 @@ def migrate_env_file(
         if clean_key not in accepted or not clean_value:
             output.append(raw_line)
             continue
+        recognized = True
         if not target.get(clean_key):
             migrated[clean_key] = clean_value
         output.append(f"{clean_key}=")
-    if not migrated:
+    if not recognized:
         return ()
-    target.set_many(migrated)
+    if migrated:
+        target.set_many(migrated)
+        if any(target.get(name) != value for name, value in migrated.items()):
+            raise SecureSettingsError("Encrypted settings migration verification failed")
     temporary = env_path.with_suffix(env_path.suffix + ".tmp")
-    temporary.write_text("\n".join(output) + "\n", encoding="utf-8")
-    temporary.replace(env_path)
+    try:
+        with temporary.open("w", encoding="utf-8", newline="\n") as handle:
+            handle.write("\n".join(output) + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        temporary.replace(env_path)
+    except OSError as exc:
+        temporary.unlink(missing_ok=True)
+        raise SecureSettingsError("Plaintext settings could not be scrubbed") from exc
     return tuple(sorted(migrated))
 
 

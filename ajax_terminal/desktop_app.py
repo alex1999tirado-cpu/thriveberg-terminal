@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import QByteArray, QEvent, QPoint, QSettings, QThread, QTimer, Qt, Signal, Slot
+from PySide6.QtCore import QByteArray, QEvent, QPoint, QProcess, QSettings, QThread, QTimer, Qt, Signal, Slot
 from PySide6.QtGui import QColor, QFont, QFontDatabase, QKeySequence, QPainter, QPixmap, QShortcut
 from PySide6.QtSvgWidgets import QSvgWidget
 from PySide6.QtWidgets import (
@@ -93,6 +93,7 @@ from ajax_terminal.options_desktop import (
 )
 from ajax_terminal.services.market_service import MarketService
 from ajax_terminal.services.data_quality_service import load_data_quality_dashboard
+from ajax_terminal.services.diagnostics_service import collect_diagnostics
 from ajax_terminal.services.news_service import NewsService
 from ajax_terminal.services.options_service import resolve_option_underlying_symbol
 from ajax_terminal.services.social_service import SocialService
@@ -103,8 +104,8 @@ from ajax_terminal.services.workstation_service import (
     load_event_calendar,
     load_portfolio,
     load_watchlist,
-    scan_beta_releases,
 )
+from ajax_terminal.services.update_service import SignedRelease, download_signed_release, fetch_update_catalog
 from ajax_terminal.social_desktop import AsyncOperation, SocialDesktopWorkspace
 from ajax_terminal.startup import StartupManager, StartupStage
 from ajax_terminal.startup_splash import StartupSplash, thriveberg_icon
@@ -123,6 +124,7 @@ from ajax_terminal.utils.periods import normalize_history_interval, normalize_hi
 from ajax_terminal.workstation_desktop import (
     AlertsWorkspace,
     DataAuditWorkspace,
+    DiagnosticsWorkspace,
     EventCalendarWorkspace,
     PortfolioWorkspace,
     UpdateWorkspace,
@@ -220,6 +222,8 @@ def resolve_desktop_command(raw: str, current_symbol: str = "") -> DesktopRoute:
         return DesktopRoute("workspaces", "", raw=clean)
     if parsed.action == CommandAction.UPDATES:
         return DesktopRoute("updates", "", raw=clean)
+    if parsed.action == CommandAction.DIAGNOSTICS:
+        return DesktopRoute("diagnostics", "", raw=clean)
     if parsed.action in {CommandAction.INSTRUMENT, CommandAction.EQUITY}:
         return DesktopRoute("description", parsed.target or current_symbol, raw=clean)
     if parsed.action == CommandAction.DATA_AUDIT:
@@ -1497,6 +1501,7 @@ class AjaxDesktopWindow(QMainWindow):
         tools_menu.addAction("DQM  DATA QUALITY", lambda: self.execute_text("DQM"))
         tools_menu.addAction("WSP  WORKSPACES", lambda: self.execute_text("WSP"))
         tools_menu.addAction("UPD  BETA RELEASES", lambda: self.execute_text("UPD"))
+        tools_menu.addAction("DIAG  SYSTEM DIAGNOSTICS", lambda: self.execute_text("DIAG"))
         tools_menu.addSeparator()
         tools_menu.addAction("DATA CONNECTIONS", self._show_data_connections)
         tools_button.setMenu(tools_menu)
@@ -1766,9 +1771,15 @@ class AjaxDesktopWindow(QMainWindow):
             self._show_workspace_manager()
         elif route.kind == "updates":
             self._load_workspace(
-                "BETA RELEASE MANAGER",
-                scan_beta_releases,
+                "SIGNED RELEASE MANAGER",
+                fetch_update_catalog,
                 self._mount_updates,
+            )
+        elif route.kind == "diagnostics":
+            self._load_workspace(
+                "SYSTEM DIAGNOSTICS",
+                collect_diagnostics,
+                self._mount_diagnostics,
             )
         elif route.kind == "ovdv":
             self._load_workspace("PYVISTA / VTK", lambda: _load_surface(route.target), self._mount_ovdv)
@@ -2165,12 +2176,52 @@ class AjaxDesktopWindow(QMainWindow):
         QTimer.singleShot(0, self.workspace_ready.emit)
 
     def _mount_updates(self, model: object) -> None:
-        workspace = UpdateWorkspace(tuple(model))
+        workspace = UpdateWorkspace(model)
+        workspace.command_requested.connect(self.execute_text)
+        workspace.update_requested.connect(self._download_update)
+        self._replace_workspace(workspace)
+        self.engine_label.setText("SIGNED RELEASE MANAGER / ED25519 + SHA-256")
+        self.instrument_bar.setText(
+            f"UPD   |   RUNNING BETA {model.current_beta:03d}   |   "
+            f"{len(model.cached_installers)} SIGNED INSTALLERS   |   {len(model.local_releases)} LEGACY BUILDS   |   "
+            f"{model.status}"
+        )
+        self.popout_button.setEnabled(False)
+        QTimer.singleShot(0, self.workspace_ready.emit)
+
+    @Slot(object)
+    def _download_update(self, release: object) -> None:
+        if not isinstance(release, SignedRelease):
+            self._show_message("UPDATE REJECTED", "INVALID SIGNED RELEASE MODEL", error=True)
+            return
+        self._load_workspace(
+            f"SIGNED BETA {release.beta:03d} DOWNLOAD",
+            lambda: download_signed_release(release),
+            self._launch_update_installer,
+        )
+
+    def _launch_update_installer(self, model: object) -> None:
+        path = Path(model)
+        if not path.is_file():
+            self._show_message("UPDATE FAILED", "VERIFIED INSTALLER WAS NOT FOUND", error=True)
+            return
+        launched, _process_id = QProcess.startDetached(str(path), [], str(path.parent))
+        if not launched:
+            self._show_message("UPDATE FAILED", "WINDOWS COULD NOT START THE VERIFIED INSTALLER", error=True)
+            return
+        self._show_message(
+            "SIGNED UPDATE READY",
+            "THE VERIFIED INSTALLER HAS STARTED. WINDOWS MAY ASK TO CLOSE THIS TERMINAL.",
+        )
+
+    def _mount_diagnostics(self, model: object) -> None:
+        workspace = DiagnosticsWorkspace(model)
         workspace.command_requested.connect(self.execute_text)
         self._replace_workspace(workspace)
-        self.engine_label.setText("LOCAL RELEASE MANAGER / SHA-256")
+        self.engine_label.setText("LOCAL DIAGNOSTICS / SANITIZED SUPPORT")
         self.instrument_bar.setText(
-            f"UPD   |   {len(model)} LOCAL BETA RELEASES   |   SIDE-BY-SIDE INSTALL / ROLLBACK"
+            f"DIAG   |   {len(model.checks)} CHECKS   |   {model.failed_count} FAILED   |   "
+            f"{model.warning_count} WARNINGS   |   NO USER DATA EXPORTED"
         )
         self.popout_button.setEnabled(False)
         QTimer.singleShot(0, self.workspace_ready.emit)
@@ -2601,6 +2652,7 @@ class AjaxDesktopWindow(QMainWindow):
             "alerts": "ALRT  |  MARKET ALERTS",
             "workspaces": "WSP  |  PERSISTENT WORKSPACES",
             "updates": "UPD  |  BETA RELEASE MANAGER",
+            "diagnostics": "DIAG  |  SYSTEM DIAGNOSTICS",
             "ovdv": f"OVDV  |  {route.target}  |  IMPLIED VOLATILITY SURFACE",
             "option-monitor": f"OMON  |  {route.target}  |  OPTION MONITOR",
             "option-valuation": f"OVME  |  {route.target}  |  OPTION VALUATION",
@@ -2860,7 +2912,8 @@ def run_desktop_app(
             app.setFont(QFont(families[0], 10))
     window = AjaxDesktopWindow(require_login=screenshot is None and splash_screenshot is None)
     if screenshot or splash_screenshot:
-        window.showMaximized()
+        window.showNormal()
+        window.resize(1920, 1080)
     else:
         window.show()
     if splash_screenshot:

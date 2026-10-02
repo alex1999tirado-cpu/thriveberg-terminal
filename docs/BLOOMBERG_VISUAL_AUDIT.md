@@ -76,6 +76,20 @@ is introduced without a reviewed screen family.
   Finnhub realtime prices, SEC filings, Yahoo fundamentals/events, RSS news and
   calculated portfolio risk.
 
+## 2026-10-02 Trusted Update And Diagnostics Pass
+
+- `UPD` is now a native trusted-release workstation with separate signed
+  installer and legacy-build identities, explicit integrity states and no
+  ambiguous `VERIFIED` label for unsigned local executables.
+- Online update controls are disabled and relabelled when no newer signed beta
+  exists. A valid release shows beta, size, signed SHA-256 and release notes.
+- `DIAG` uses the same flat strip, section heading and fixed-column table as the
+  rest of the terminal. PASS, WARN and FAIL retain terminal green, amber and red.
+- Support export wording states exactly what leaves the machine; portfolios,
+  database contents and credential values are excluded.
+- Both workspaces were visually checked at 1920 x 1080 with no overlap,
+  clipping or nested-card styling.
+
 ## 2026-09-28 Quality Pass
 
 - `HOME` now opens the working multi-asset monitor after login instead of an
@@ -143,7 +157,11 @@ is introduced without a reviewed screen family.
 | EXPORT | XLS | Fundamentals | Reviewed |
 | SCREENER | EQS | Fundamentals | Reviewed |
 | PORTFOLIO | PORT | Portfolio accounting / risk / corporate actions | Reviewed; ten-view native ledger, risk and corporate-action workstation |
+| ALERTS | ALRT | Event-driven monitoring | Reviewed; background rules and persistent trigger ledger |
 | DATA_QUALITY | DQM / data diagnostics | Support | Reviewed; native four-view monitor |
+| WORKSPACES | WSP | Workspace manager | Support | Reviewed |
+| UPDATES | UPD | Release manager | Support | Reviewed; signed online channel and revalidated cache |
+| DIAGNOSTICS | DIAG | System diagnostics | Support | Reviewed; sanitized support export |
 | CHART | GP | Price chart | Rebuilt with Lightweight Charts |
 | RISK | GP analytics view | Price chart | Fixed; now routes to live chart |
 | OPTIONS | OMON | Derivatives | Reviewed |

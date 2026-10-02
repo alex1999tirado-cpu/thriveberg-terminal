@@ -16,6 +16,7 @@ secure-settings.bin
 *.sqlite3
 *.db-journal
 *.pem
+!ajax_terminal/assets/update-public-key.pem
 *.key
 *.p12
 *.pfx

@@ -51,6 +51,7 @@ class CommandAction(StrEnum):
     DATA_QUALITY = "DATA_QUALITY"
     WORKSPACES = "WORKSPACES"
     UPDATES = "UPDATES"
+    DIAGNOSTICS = "DIAGNOSTICS"
     PORTFOLIO = "PORTFOLIO"
     ALERTS = "ALERTS"
     HELP = "HELP"
@@ -197,6 +198,9 @@ ALIASES = {
     "UPD": CommandAction.UPDATES,
     "UPDATE": CommandAction.UPDATES,
     "UPDATES": CommandAction.UPDATES,
+    "DIAG": CommandAction.DIAGNOSTICS,
+    "DIAGNOSTIC": CommandAction.DIAGNOSTICS,
+    "DIAGNOSTICS": CommandAction.DIAGNOSTICS,
     "PORT": CommandAction.PORTFOLIO,
     "PORTFOLIO": CommandAction.PORTFOLIO,
     "ALRT": CommandAction.ALERTS,

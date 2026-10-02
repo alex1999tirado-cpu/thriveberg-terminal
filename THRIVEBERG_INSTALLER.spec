@@ -12,6 +12,9 @@ datas += collect_data_files("ajax_terminal", includes=["assets/*"])
 image_datas, image_binaries, image_hiddenimports = collect_all("textual_image")
 datas += image_datas
 version_file = os.environ.get("THRIVEBERG_VERSION_FILE", "installer/version_info.txt")
+build_info_file = os.environ.get("THRIVEBERG_BUILD_INFO_FILE", "")
+if build_info_file:
+    datas += [(build_info_file, "ajax_terminal/assets")]
 
 chart_hiddenimports = [
     "ajax_terminal.desktop_app",

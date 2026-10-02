@@ -41,7 +41,6 @@ from ajax_terminal.services.alert_service import (
     AlertsLoad,
 )
 from ajax_terminal.services.workstation_service import (
-    BetaRelease,
     DataAuditLoad,
     EVENT_GEOGRAPHY_FILTERS,
     EVENT_INDUSTRY_FILTERS,
@@ -55,6 +54,8 @@ from ajax_terminal.services.portfolio_import_service import (
     apply_broker_import,
     preview_broker_csv,
 )
+from ajax_terminal.services.diagnostics_service import DiagnosticReport, export_support_bundle
+from ajax_terminal.services.update_service import UpdateCatalog
 from ajax_terminal.storage.cache import WatchlistStore
 from ajax_terminal.storage.workstation import (
     AlertStore,
@@ -1631,50 +1632,117 @@ class WorkspaceManagerWorkspace(QWidget):
 
 class UpdateWorkspace(QWidget):
     command_requested = Signal(str)
+    update_requested = Signal(object)
 
-    def __init__(self, releases: tuple[BetaRelease, ...]) -> None:
+    def __init__(self, catalog: UpdateCatalog) -> None:
         super().__init__()
-        self.releases = releases
+        self.catalog = catalog
+        self.releases = catalog.local_releases
+        self.cached_installers = catalog.cached_installers
         self.current_executable = Path(sys.executable).resolve() if getattr(sys, "frozen", False) else None
         root = _root(self)
         controls = _strip()
         row = controls.layout()
-        row.addWidget(_label("UPD  BETA RELEASES", AJAX_CYAN, bold=True))
+        row.addWidget(_label("UPD  SIGNED BETA RELEASES", AJAX_CYAN, bold=True))
+        install_label = "DOWNLOAD / INSTALL" if catalog.remote_release is not None else "NO UPDATE AVAILABLE"
+        self.install_button = _button(install_label, self._install, amber=True)
+        self.install_button.setEnabled(catalog.remote_release is not None)
+        row.addWidget(self.install_button)
         row.addWidget(_button("RUN / ROLLBACK", self._launch, amber=True))
         row.addWidget(_button("OPEN RELEASES FOLDER", self._open_folder))
         row.addWidget(_button("RESCAN", lambda: self.command_requested.emit("UPD")))
         row.addStretch(1)
         root.addWidget(controls)
         current = self.current_executable.name if self.current_executable else "DEVELOPMENT BUILD"
-        root.addWidget(_heading(f"UPD  LOCAL BETA MANAGER  |  RUNNING {current}"))
-        root.addWidget(_subheading("A RELEASE IS LAUNCHED SIDE-BY-SIDE; THE CURRENT EXECUTABLE IS NEVER OVERWRITTEN WHILE RUNNING."))
-        self.table = _table(("VERSION", "STATUS", "INTEGRITY", "SIZE", "BUILT", "FILE", "SHA-256"))
-        self.table.setRowCount(max(len(releases), 1))
-        if releases:
-            latest = max(item.version for item in releases)
-            for table_row, release in enumerate(releases):
+        root.addWidget(_heading(f"UPD  TRUSTED RELEASE MANAGER  |  RUNNING {current}"))
+        remote = catalog.remote_release
+        if remote is not None:
+            remote_text = (
+                f"SIGNED UPDATE  BETA {remote.beta:03d}  |  {remote.installer_size / 1024 / 1024:,.1f} MB  |  "
+                f"ED25519 VERIFIED METADATA  |  SHA-256 {remote.installer_sha256[:16]}..."
+            )
+            root.addWidget(_label(remote_text, AJAX_GREEN, bold=True))
+            if remote.notes:
+                root.addWidget(_subheading("  |  ".join(remote.notes)))
+        else:
+            status_color = AJAX_RED if catalog.status.startswith("ONLINE CHECK FAILED") else AJAX_MUTED
+            root.addWidget(_label(catalog.status, status_color, bold=True))
+        root.addWidget(
+            _subheading(
+                "ONLINE INSTALLS REQUIRE AN ED25519 SIGNATURE AND SIGNED SIZE/HASH. "
+                "LOCAL LEGACY BUILDS REMAIN AVAILABLE FOR MANUAL ROLLBACK."
+            )
+        )
+        self.table = _table(("VERSION", "TYPE", "STATUS", "INTEGRITY", "SIZE", "BUILT", "FILE", "SHA-256"))
+        total_rows = len(self.cached_installers) + len(self.releases)
+        self.table.setRowCount(max(total_rows, 1))
+        table_row = 0
+        for cached in self.cached_installers:
+            release = cached.release
+            integrity = "SIGNED / VERIFIED" if cached.verified else "REJECTED"
+            values = (
+                f"BETA {cached.beta:03d}",
+                "INSTALLER",
+                "CACHED",
+                integrity,
+                f"{cached.path.stat().st_size / 1024 / 1024:,.1f} MB" if cached.path.exists() else "--",
+                release.published_at.strftime("%d %b %Y %H:%M") if release is not None else "--",
+                cached.path.name,
+                release.installer_sha256 if release is not None else cached.error,
+            )
+            for column, value in enumerate(values):
+                color = (
+                    AJAX_GREEN if column == 3 and cached.verified
+                    else AJAX_RED if column == 3
+                    else AJAX_AMBER if column == 0
+                    else AJAX_TEXT
+                )
+                item = _item(value, color=color)
+                item.setData(Qt.ItemDataRole.UserRole, str(cached.path) if cached.verified else "")
+                self.table.setItem(table_row, column, item)
+            table_row += 1
+        if self.releases:
+            latest = max(item.version for item in self.releases)
+            for release in self.releases:
                 running = self.current_executable == release.path
                 status = "RUNNING" if running else "LATEST" if release.version == latest else "ROLLBACK"
-                integrity = "VERIFIED" if release.verified else "NO CHECKSUM" if not release.expected_sha256 else "FAILED"
+                integrity = (
+                    "UNSIGNED / HASH OK" if release.verified
+                    else "UNSIGNED / NO HASH" if not release.expected_sha256
+                    else "HASH FAILED"
+                )
                 values = (
-                    f"BETA {release.version:03d}", status, integrity, f"{release.size_bytes / 1024 / 1024:,.1f} MB",
+                    f"BETA {release.version:03d}", "LEGACY APP", status, integrity,
+                    f"{release.size_bytes / 1024 / 1024:,.1f} MB",
                     release.modified_at.strftime("%d %b %Y %H:%M"), release.path.name, release.sha256,
                 )
                 for column, value in enumerate(values):
-                    color = AJAX_GREEN if integrity == "VERIFIED" and column == 2 else AJAX_RED if integrity == "FAILED" and column == 2 else AJAX_AMBER if column in {0, 1} else AJAX_TEXT
+                    color = (
+                        AJAX_AMBER if integrity == "UNSIGNED / HASH OK" and column == 3
+                        else AJAX_RED if integrity == "HASH FAILED" and column == 3
+                        else AJAX_AMBER if column in {0, 2}
+                        else AJAX_TEXT
+                    )
                     item = _item(value, color=color)
                     item.setData(Qt.ItemDataRole.UserRole, str(release.path))
                     self.table.setItem(table_row, column, item)
-        else:
+                table_row += 1
+        if not total_rows:
             self.table.setItem(0, 0, _item("NO BETA RELEASES FOUND", color=AJAX_MUTED))
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
-        self.table.horizontalHeader().setSectionResizeMode(5, QHeaderView.ResizeMode.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(6, QHeaderView.ResizeMode.Stretch)
         self.table.cellDoubleClicked.connect(lambda _row, _column: self._launch())
         root.addWidget(self.table, 1)
 
+    @Slot()
+    def _install(self) -> None:
+        if self.catalog.remote_release is not None:
+            self.install_button.setEnabled(False)
+            self.update_requested.emit(self.catalog.remote_release)
+
     def _selected_path(self) -> Path | None:
         row = self.table.currentRow()
-        if row < 0 and self.releases:
+        if row < 0 and (self.cached_installers or self.releases):
             row = 0
         item = self.table.item(row, 0) if row >= 0 else None
         raw = item.data(Qt.ItemDataRole.UserRole) if item is not None else ""
@@ -1685,18 +1753,86 @@ class UpdateWorkspace(QWidget):
     def _launch(self) -> None:
         path = self._selected_path()
         if path is not None and path != self.current_executable:
-            QProcess.startDetached(str(path), [], str(Path.cwd()))
+            QProcess.startDetached(str(path), [], str(path.parent))
 
     @Slot()
     def _open_folder(self) -> None:
         path = self._selected_path()
-        folder = path.parent if path is not None else Path.cwd() / "releases" / "BETA"
+        fallback = self.cached_installers[0].path.parent if self.cached_installers else Path.cwd() / "releases" / "BETA"
+        folder = path.parent if path is not None else fallback
         if folder.exists():
             open_local_path(folder)
 
 
+class DiagnosticsWorkspace(QWidget):
+    command_requested = Signal(str)
+
+    def __init__(self, report: DiagnosticReport) -> None:
+        super().__init__()
+        self.report = report
+        root = _root(self)
+        controls = _strip()
+        row = controls.layout()
+        row.addWidget(_label("DIAG  SYSTEM DIAGNOSTICS", AJAX_CYAN, bold=True))
+        row.addWidget(_button("EXPORT SUPPORT ZIP", self._export, amber=True))
+        row.addWidget(_button("REFRESH", lambda: self.command_requested.emit("DIAG")))
+        row.addStretch(1)
+        root.addWidget(controls)
+        summary_color = AJAX_RED if report.failed_count else AJAX_AMBER if report.warning_count else AJAX_GREEN
+        root.addWidget(
+            _heading(
+                f"DIAG  {report.build.label.upper()}  |  "
+                f"{report.failed_count} FAILED  |  {report.warning_count} WARNINGS"
+            )
+        )
+        root.addWidget(
+            _subheading(
+                "SUPPORT EXPORTS INCLUDE SYSTEM METADATA AND A SANITIZED LOG ONLY; "
+                "PORTFOLIOS, DATABASE CONTENTS AND CREDENTIAL VALUES ARE EXCLUDED."
+            )
+        )
+        self.status = _label("READY", summary_color, bold=True)
+        root.addWidget(self.status)
+        self.table = _table(("CATEGORY", "CHECK", "STATUS", "DETAIL"))
+        self.table.setRowCount(len(report.checks))
+        for table_row, check in enumerate(report.checks):
+            values = (check.category, check.name, check.status, check.detail)
+            for column, value in enumerate(values):
+                color = AJAX_TEXT
+                if column == 2:
+                    color = AJAX_GREEN if value == "PASS" else AJAX_RED if value == "FAIL" else AJAX_AMBER
+                self.table.setItem(table_row, column, _item(value, color=color))
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
+        root.addWidget(self.table, 1)
+
+    @Slot()
+    def _export(self) -> None:
+        suggested = user_documents_path() / f"THRIVEBERG-support-{datetime.now():%Y%m%d-%H%M%S}.zip"
+        selected, _ = QFileDialog.getSaveFileName(
+            self,
+            "Export sanitized THRIVEBERG support bundle",
+            str(suggested),
+            "ZIP archive (*.zip)",
+        )
+        if not selected:
+            return
+        try:
+            exported = export_support_bundle(self.report, selected)
+            self.status.setText(f"EXPORTED  {exported}")
+            self.status.setStyleSheet(f"color:{AJAX_GREEN};font-weight:bold;padding:0 5px")
+        except (OSError, RuntimeError) as exc:
+            self.status.setText(f"EXPORT FAILED  {exc}")
+            self.status.setStyleSheet(f"color:{AJAX_RED};font-weight:bold;padding:0 5px")
+
+
 def restore_workspace_geometry(snapshot: WorkspaceSnapshot) -> QByteArray:
     return QByteArray.fromBase64(snapshot.geometry_b64.encode("ascii")) if snapshot.geometry_b64 else QByteArray()
+
+
+def user_documents_path() -> Path:
+    documents = Path.home() / "Documents"
+    return documents if documents.is_dir() else Path.home()
 
 
 def _root(widget: QWidget) -> QVBoxLayout:

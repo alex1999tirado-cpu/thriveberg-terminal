@@ -16,16 +16,29 @@ desktop-client identifiers, not privileged credentials; database access remains
 restricted by Supabase Auth and Row Level Security. Secret and `service_role`
 keys must never be added to the installer.
 
-Beta 013 is the current distributable build. Build the next beta with:
+Beta 017 is the current distributable build. Build the next beta from a clean
+Git working tree with:
 
 ```powershell
 .\build_installer.ps1
 ```
 
-The script defaults to Beta 014 and application version 0.5.0. Use explicit
+The script defaults to Beta 018 and application version 0.5.0. Use explicit
 parameters for later releases.
 
+The build requires the release signing key at
+`%LOCALAPPDATA%\THRIVEBERG Terminal\release-signing-key.bin`. That private key is
+encrypted with Windows DPAPI and must never enter source control. The matching
+Ed25519 public key is bundled with the application.
+
 Do not commit generated installers to the source repository. Publish the setup
-executable and its generated `.sha256` file together as GitHub Release assets.
-The current beta is unsigned, so recipients should verify the checksum before
-running it and may still see a Microsoft SmartScreen warning.
+executable, `.sha256`, `.update.json`, and `.update.json.sig` files together as
+GitHub Release assets in the public binary-only distribution repository. `UPD`
+trusts the Ed25519 signature and then checks the signed installer size and
+SHA-256 before launch. Authenticode is a separate future requirement, so Windows
+SmartScreen may still warn about the publisher.
+
+Private settings use the versioned DPAPI V2 envelope. A V1 encrypted store is
+backed up in encrypted form, migrated atomically and verified before use. Legacy
+recognized `.env` values are copied into DPAPI and scrubbed without creating a
+plaintext backup.

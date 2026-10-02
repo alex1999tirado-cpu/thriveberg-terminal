@@ -9,6 +9,7 @@
 *.sql text eol=lf
 *.ps1 text eol=lf
 *.spec text eol=lf
+*.pem text eol=lf
 
 *.png binary
 *.ico binary
