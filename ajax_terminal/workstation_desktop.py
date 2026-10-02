@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import sys
 import urllib.parse
-from datetime import date
+from datetime import date, datetime
 from math import ceil
 from pathlib import Path
 
@@ -34,8 +34,13 @@ from ajax_terminal.charts.theme import (
     AJAX_TEXT,
 )
 from ajax_terminal.desktop_security import open_external_url, open_local_path
-from ajax_terminal.services.workstation_service import (
+from ajax_terminal.services.alert_service import (
+    ALERT_KIND_FIELDS,
+    ALERT_KIND_LABELS,
+    STREAM_KINDS,
     AlertsLoad,
+)
+from ajax_terminal.services.workstation_service import (
     BetaRelease,
     DataAuditLoad,
     EVENT_GEOGRAPHY_FILTERS,
@@ -1077,46 +1082,176 @@ class AlertsWorkspace(QWidget):
         controls = _strip()
         row = controls.layout()
         row.addWidget(_label("ALRT", AJAX_CYAN, bold=True))
-        self.symbol = _input("SYMBOL", 110)
+        self.kind = QComboBox()
+        for code, label in ALERT_KIND_LABELS.items():
+            self.kind.addItem(label, code)
+        self.kind.currentIndexChanged.connect(self._kind_changed)
+        self.symbol = _input("SYMBOL / PORTFOLIO", 160)
         self.field = QComboBox()
-        self.field.addItems(("PRICE", "CHANGE_PCT", "VOLUME", "BID", "ASK"))
         self.operator = QComboBox()
-        self.operator.addItems((">", ">=", "<", "<=", "="))
         self.threshold = _input("THRESHOLD", 115)
-        for widget in (self.symbol, self.field, self.operator, self.threshold):
+        for widget in (self.kind, self.symbol, self.field, self.operator, self.threshold):
             row.addWidget(widget)
         row.addWidget(_button("ADD ALERT", self._add, amber=True))
         row.addWidget(_button("ENABLE / DISABLE", self._toggle))
         row.addWidget(_button("DELETE", self._delete))
         row.addWidget(_button("REFRESH", self._refresh))
         root.addWidget(controls)
-        root.addWidget(_heading(f"ALRT  MARKET ALERTS  |  UPDATED {model.refreshed_at:%H:%M:%S %Z}  |  AUTO 30S"))
-        self.table = _table(("ID", "STATUS", "SECURITY", "FIELD", "RULE", "CURRENT", "SOURCE", "DATA", "LAST TRIGGER"))
+        self._kind_changed()
+        root.addWidget(
+            _heading(
+                f"ALRT  BACKGROUND ALERT ENGINE  |  UPDATED {model.refreshed_at:%H:%M:%S %Z}  |  "
+                f"CHECKED {model.evaluated}  |  NEW {len(model.new_events)}  |  "
+                f"UNREAD {model.unacknowledged}  |  ERRORS {model.failures}"
+            )
+        )
+        root.addWidget(
+            _subheading(
+                "MARKET 30S  |  NEWS 2M  |  FUNDAMENTALS / FILINGS / EVENTS 15M  |  "
+                "PORTFOLIO RISK 30M  |  NUMERIC RULES REARM AFTER THE CONDITION CLEARS"
+            )
+        )
+        self.tabs = QTabWidget()
+        self.tabs.setDocumentMode(True)
+        self.table = _table(
+            (
+                "ID", "STATUS", "TYPE", "TARGET", "SIGNAL", "RULE", "CURRENT",
+                "SOURCE", "DATA", "LAST CHECK", "LAST TRIGGER", "HITS", "CONTROL NOTE",
+            )
+        )
         self.table.setRowCount(max(len(model.evaluations), 1))
         if model.evaluations:
             for table_row, evaluation in enumerate(model.evaluations):
                 rule = evaluation.rule
-                status = "TRIGGERED" if evaluation.triggered else "ARMED" if rule.enabled else "DISABLED"
+                status = (
+                    "DISABLED" if not rule.enabled else
+                    "DATA ERROR" if rule.last_error else
+                    "TRIGGERED" if evaluation.triggered else "ARMED"
+                )
+                rule_text = (
+                    "NEW VERIFIED ITEM" if rule.kind in STREAM_KINDS else
+                    f"WITHIN {rule.threshold:,.3g} DAYS" if rule.kind == "EVENT" else
+                    f"{rule.operator} {rule.threshold:,.6g}"
+                )
                 values = (
-                    str(rule.id or "--"), status, rule.symbol, rule.field,
-                    f"{rule.operator} {rule.threshold:,.6g}", fmt_number(evaluation.value, 6),
-                    evaluation.quote.provider, str(evaluation.quote.quality), rule.last_triggered_at or "--",
+                    str(rule.id or "--"), status, ALERT_KIND_LABELS.get(rule.kind, rule.kind),
+                    rule.symbol, rule.field, rule_text, fmt_number(evaluation.value, 6),
+                    evaluation.quote.provider, str(evaluation.quote.quality),
+                    _alert_timestamp(rule.last_evaluated_at),
+                    _alert_timestamp(rule.last_triggered_at),
+                    str(rule.trigger_count), rule.last_error or "OK",
                 )
                 for column, value in enumerate(values):
-                    color = AJAX_RED if evaluation.triggered and column == 1 else AJAX_GREEN if column == 1 and rule.enabled else AJAX_AMBER if column in {4, 5} else AJAX_TEXT
-                    item = _item(value, color=color, right=column in {0, 4, 5})
+                    color = (
+                        AJAX_RED if status in {"TRIGGERED", "DATA ERROR"} and column == 1 else
+                        AJAX_GREEN if column == 1 and rule.enabled else
+                        AJAX_CYAN if column in {2, 4} else
+                        AJAX_AMBER if column in {5, 6, 11} else AJAX_TEXT
+                    )
+                    item = _item(value, color=color, right=column in {0, 5, 6, 11})
                     item.setData(Qt.ItemDataRole.UserRole, rule.id)
+                    if column == 12:
+                        item.setToolTip(rule.last_error or "LAST EVALUATION COMPLETED")
                     self.table.setItem(table_row, column, item)
         else:
             self.table.setItem(0, 0, _item("NO ALERTS CONFIGURED", color=AJAX_MUTED))
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
-        self.table.horizontalHeader().setSectionResizeMode(8, QHeaderView.ResizeMode.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(12, QHeaderView.ResizeMode.Stretch)
         self.table.cellDoubleClicked.connect(self._open_security)
-        root.addWidget(self.table, 1)
+        self.events = _table(
+            (
+                "TIME", "STATUS", "TYPE", "TARGET", "SIGNAL", "TITLE", "VALUE",
+                "SOURCE", "DATA", "DETAIL / DOCUMENT",
+            )
+        )
+        self.events.setRowCount(max(len(model.events), 1))
+        rules_by_id = {
+            int(entry.rule.id): entry.rule
+            for entry in model.evaluations
+            if entry.rule.id is not None
+        }
+        if model.events:
+            for table_row, event in enumerate(model.events):
+                rule = rules_by_id.get(event.alert_id)
+                values = (
+                    _alert_timestamp(event.occurred_at),
+                    "READ" if event.acknowledged else "NEW",
+                    ALERT_KIND_LABELS.get(rule.kind, rule.kind) if rule else "--",
+                    rule.symbol if rule else "--",
+                    rule.field if rule else "--",
+                    event.title,
+                    fmt_number(event.value, 6),
+                    event.provider or "--",
+                    event.quality,
+                    event.detail or event.url or "--",
+                )
+                for column, value in enumerate(values):
+                    color = (
+                        AJAX_GREEN if column == 1 and not event.acknowledged else
+                        AJAX_CYAN if column in {2, 4} else
+                        AJAX_AMBER if column in {5, 6} else AJAX_TEXT
+                    )
+                    item = _item(value, color=color, right=column == 6)
+                    item.setData(Qt.ItemDataRole.UserRole, event.id)
+                    item.setData(Qt.ItemDataRole.UserRole + 1, event.url)
+                    if column == 9:
+                        item.setToolTip(event.detail or event.url)
+                    self.events.setItem(table_row, column, item)
+        else:
+            self.events.setItem(0, 0, _item("NO ALERT TRIGGERS RECORDED", color=AJAX_MUTED))
+        self.events.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        self.events.horizontalHeader().setSectionResizeMode(9, QHeaderView.ResizeMode.Stretch)
+        self.events.cellDoubleClicked.connect(self._open_event)
+        history_page = QWidget()
+        history_layout = QVBoxLayout(history_page)
+        history_layout.setContentsMargins(0, 0, 0, 0)
+        history_layout.setSpacing(2)
+        history_controls = _strip()
+        history_row = history_controls.layout()
+        history_row.addWidget(_label("TRIGGER LEDGER", AJAX_CYAN, bold=True))
+        history_row.addWidget(_button("ACK SELECTED", self._ack_selected))
+        history_row.addWidget(_button("ACK ALL", self._ack_all))
+        history_row.addStretch(1)
+        history_row.addWidget(_label("DOUBLE-CLICK TO OPEN SOURCE / WORKSPACE", AJAX_MUTED))
+        history_layout.addWidget(history_controls)
+        history_layout.addWidget(self.events, 1)
+        self.tabs.addTab(self.table, "1) ACTIVE RULES")
+        self.tabs.addTab(history_page, f"2) TRIGGER HISTORY  [{model.unacknowledged} NEW]")
+        if model.new_events:
+            self.tabs.setCurrentIndex(1)
+        root.addWidget(self.tabs, 1)
         self.refresh_timer = QTimer(self)
         self.refresh_timer.setInterval(30_000)
-        self.refresh_timer.timeout.connect(self._refresh)
+        self.refresh_timer.timeout.connect(self._view)
         self.refresh_timer.start()
+
+    @Slot()
+    def _kind_changed(self) -> None:
+        kind = str(self.kind.currentData() or "MARKET")
+        self.field.clear()
+        self.field.addItems(ALERT_KIND_FIELDS[kind])
+        self.operator.clear()
+        if kind in STREAM_KINDS:
+            self.operator.addItem("NEW")
+            self.operator.setEnabled(False)
+            self.threshold.setText("0")
+            self.threshold.setEnabled(False)
+        elif kind == "EVENT":
+            self.operator.addItem("<=")
+            self.operator.setEnabled(False)
+            self.threshold.setEnabled(True)
+            self.threshold.setPlaceholderText("DAYS")
+            if not self.threshold.text().strip() or self.threshold.text() == "0":
+                self.threshold.setText("7")
+        else:
+            self.operator.addItems((">", ">=", "<", "<=", "="))
+            self.operator.setEnabled(True)
+            self.threshold.setEnabled(True)
+            self.threshold.clear()
+            self.threshold.setPlaceholderText("THRESHOLD")
+        self.symbol.setPlaceholderText(
+            "PORTFOLIO NAME" if kind == "PORTFOLIO_RISK" else "SYMBOL / TOPIC"
+        )
 
     def _selected(self):
         row = self.table.currentRow()
@@ -1127,34 +1262,93 @@ class AlertsWorkspace(QWidget):
     @Slot()
     def _add(self) -> None:
         try:
-            self.store.add(self.symbol.text(), self.field.currentText(), self.operator.currentText(), float(self.threshold.text()))
+            kind = str(self.kind.currentData() or "MARKET")
+            threshold = 0.0 if kind in STREAM_KINDS else float(self.threshold.text())
+            self.store.add(
+                self.symbol.text(),
+                self.field.currentText(),
+                self.operator.currentText(),
+                threshold,
+                kind=kind,
+            )
         except ValueError:
             return
-        self.command_requested.emit("ALRT")
+        self.command_requested.emit("ALRT REFRESH")
 
     @Slot()
     def _toggle(self) -> None:
         selected = self._selected()
         if selected is not None and selected.rule.id is not None:
             self.store.set_enabled(selected.rule.id, not selected.rule.enabled)
-            self.command_requested.emit("ALRT")
+            self.command_requested.emit("ALRT VIEW")
 
     @Slot()
     def _delete(self) -> None:
         selected = self._selected()
         if selected is not None and selected.rule.id is not None:
             self.store.delete(selected.rule.id)
-            self.command_requested.emit("ALRT")
+            self.command_requested.emit("ALRT VIEW")
 
     @Slot()
     def _refresh(self) -> None:
-        self.command_requested.emit("ALRT")
+        self.command_requested.emit("ALRT REFRESH")
+
+    @Slot()
+    def _view(self) -> None:
+        self.command_requested.emit("ALRT VIEW")
+
+    @Slot()
+    def _ack_selected(self) -> None:
+        row = self.events.currentRow()
+        item = self.events.item(row, 0) if row >= 0 else None
+        event_id = item.data(Qt.ItemDataRole.UserRole) if item is not None else None
+        if event_id is not None:
+            self.store.acknowledge(int(event_id))
+            self.command_requested.emit("ALRT VIEW")
+
+    @Slot()
+    def _ack_all(self) -> None:
+        self.store.acknowledge()
+        self.command_requested.emit("ALRT VIEW")
 
     @Slot(int, int)
     def _open_security(self, row: int, _column: int) -> None:
-        item = self.table.item(row, 2)
-        if item is not None:
-            self.command_requested.emit(f"{item.text()} DES")
+        item = self.table.item(row, 0)
+        alert_id = item.data(Qt.ItemDataRole.UserRole) if item is not None else None
+        evaluation = next(
+            (entry for entry in self.model.evaluations if entry.rule.id == alert_id),
+            None,
+        )
+        if evaluation is not None:
+            self.command_requested.emit(self._route_for_rule(evaluation.rule))
+
+    @Slot(int, int)
+    def _open_event(self, row: int, _column: int) -> None:
+        item = self.events.item(row, 0)
+        if item is None:
+            return
+        event_id = item.data(Qt.ItemDataRole.UserRole)
+        event = next((entry for entry in self.model.events if entry.id == event_id), None)
+        if event is None:
+            return
+        if event.url:
+            open_external_url(event.url)
+            return
+        evaluation = next(
+            (entry for entry in self.model.evaluations if entry.rule.id == event.alert_id),
+            None,
+        )
+        if evaluation is not None:
+            self.command_requested.emit(self._route_for_rule(evaluation.rule))
+
+    @staticmethod
+    def _route_for_rule(rule) -> str:
+        return {
+            "FILING": f"{rule.symbol} FILINGS",
+            "NEWS": f"{rule.symbol} NEWS",
+            "EVENT": f"{rule.symbol} EVT",
+            "PORTFOLIO_RISK": f"PORT {rule.symbol} RISK SPY 1Y",
+        }.get(rule.kind, f"{rule.symbol} DES")
 
 
 class EventCalendarWorkspace(QWidget):
@@ -1597,6 +1791,16 @@ def _percent(value: float | None) -> str:
 
 def _risk_percent(value: float | None) -> str:
     return "--" if value is None else fmt_percent(value * 100.0, signed=True)
+
+
+def _alert_timestamp(value: str | None) -> str:
+    if not value:
+        return "--"
+    try:
+        observed = datetime.fromisoformat(value).astimezone()
+    except ValueError:
+        return value[:19].replace("T", " ")
+    return observed.strftime("%d %b %H:%M:%S")
 
 
 def _correlation_color(value: float | None) -> str:

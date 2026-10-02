@@ -16,6 +16,12 @@ from ajax_terminal.models.instrument import AssetClass
 from ajax_terminal.models.quote import DataQuality, Quote, StatementType
 from ajax_terminal.services.equity_research_service import EquityResearchService
 from ajax_terminal.services.market_service import MarketService
+from ajax_terminal.services.alert_service import (
+    AlertEvaluation,
+    AlertsLoad,
+    evaluate_alerts,
+    load_alert_dashboard,
+)
 from ajax_terminal.services.corporate_actions_service import (
     CorporateActionApplyResult,
     PortfolioCorporateActionsLoad,
@@ -29,7 +35,6 @@ from ajax_terminal.services.portfolio_risk_service import (
 from ajax_terminal.analytics.portfolio_risk import PortfolioRiskReport
 from ajax_terminal.storage.cache import WatchlistStore
 from ajax_terminal.storage.workstation import (
-    AlertRule,
     AlertStore,
     PortfolioCashFlow,
     PortfolioPosition,
@@ -154,20 +159,6 @@ class PortfolioLoad:
     risk_period: str = "1Y"
     corporate_actions: PortfolioCorporateActionsLoad | None = None
     corporate_action_result: CorporateActionApplyResult | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class AlertEvaluation:
-    rule: AlertRule
-    quote: Quote
-    value: float | None
-    triggered: bool
-
-
-@dataclass(frozen=True, slots=True)
-class AlertsLoad:
-    evaluations: tuple[AlertEvaluation, ...]
-    refreshed_at: datetime
 
 
 @dataclass(frozen=True, slots=True)
@@ -638,40 +629,65 @@ async def _portfolio_fx_rate(
 def load_alerts(args: Iterable[str], store: AlertStore | None = None) -> AlertsLoad:
     alerts = store or AlertStore()
     tokens = [str(item).strip().upper() for item in args if str(item).strip()]
-    if tokens and tokens[0] == "ADD" and len(tokens) >= 5:
-        alerts.add(tokens[1], tokens[2], tokens[3], float(tokens[4]))
-    elif tokens and tokens[0] == "DELETE" and len(tokens) >= 2:
+    if tokens and tokens[0] == "ADD":
+        if len(tokens) < 2:
+            raise ValueError("ALRT ADD requires a target and rule")
+        kind_aliases = {
+            "MARKET": "MARKET",
+            "FUNDAMENTAL": "FUNDAMENTAL",
+            "FILING": "FILING",
+            "NEWS": "NEWS",
+            "EVENT": "EVENT",
+            "RISK": "PORTFOLIO_RISK",
+            "PORTFOLIO_RISK": "PORTFOLIO_RISK",
+        }
+        kind = kind_aliases.get(tokens[1])
+        if kind is None:
+            if len(tokens) < 5:
+                raise ValueError("Use ALRT ADD SYMBOL FIELD OPERATOR THRESHOLD")
+            alerts.add(
+                tokens[1], tokens[2], tokens[3],
+                float(tokens[4].removesuffix("%")),
+            )
+        else:
+            fields = AlertStore.FIELDS_BY_KIND[kind]
+            field_index = next(
+                (index for index in range(2, len(tokens)) if tokens[index] in fields),
+                None,
+            )
+            if field_index is None or field_index == 2:
+                raise ValueError(f"ALRT ADD {kind} requires a target and supported signal")
+            target = " ".join(tokens[2:field_index])
+            field = tokens[field_index]
+            if kind in {"FILING", "NEWS"}:
+                operator, threshold = "NEW", 0.0
+            elif kind == "EVENT":
+                operator = tokens[field_index + 1] if len(tokens) > field_index + 1 else "<="
+                threshold = (
+                    float(tokens[field_index + 2].removesuffix("%"))
+                    if len(tokens) > field_index + 2 else 7.0
+                )
+            else:
+                if len(tokens) <= field_index + 2:
+                    raise ValueError("Numeric alerts require an operator and threshold")
+                operator = tokens[field_index + 1]
+                threshold = float(tokens[field_index + 2].removesuffix("%"))
+            alerts.add(target, field, operator, threshold, kind=kind)
+        return evaluate_alerts(alerts, force=True)
+    if tokens and tokens[0] == "DELETE" and len(tokens) >= 2:
         alerts.delete(int(tokens[1]))
-    rules = alerts.list()
-
-    async def load_quotes() -> list[Quote]:
-        symbols = list(dict.fromkeys(rule.symbol for rule in rules))
-        return await MarketService().bulk_quotes(symbols, allow_mock=False)
-
-    quotes = asyncio.run(load_quotes()) if rules else []
-    by_symbol = {quote.symbol: quote for quote in quotes}
-    evaluations: list[AlertEvaluation] = []
-    for rule in rules:
-        quote = by_symbol.get(rule.symbol) or Quote(rule.symbol, rule.symbol, None)
-        value = _alert_value(quote, rule.field)
-        triggered = bool(rule.enabled and value is not None and _compare(value, rule.operator, rule.threshold))
-        triggered_at = datetime.now().astimezone().isoformat() if triggered else rule.last_triggered_at
-        if rule.id is not None:
-            alerts.record_evaluation(rule.id, value, triggered)
-        evaluated_rule = AlertRule(
-            rule.id,
-            rule.symbol,
-            rule.field,
-            rule.operator,
-            rule.threshold,
-            rule.enabled,
-            value,
-            triggered_at,
-            rule.created_at,
-            datetime.now().astimezone().isoformat(),
-        )
-        evaluations.append(AlertEvaluation(evaluated_rule, quote, value, triggered))
-    return AlertsLoad(tuple(evaluations), datetime.now().astimezone())
+        return load_alert_dashboard(alerts)
+    if tokens and tokens[0] in {"ENABLE", "DISABLE"} and len(tokens) >= 2:
+        alerts.set_enabled(int(tokens[1]), tokens[0] == "ENABLE")
+        return load_alert_dashboard(alerts)
+    if tokens and tokens[0] == "ACK":
+        event_id = None if len(tokens) < 2 or tokens[1] == "ALL" else int(tokens[1])
+        alerts.acknowledge(event_id)
+        return load_alert_dashboard(alerts)
+    if tokens and tokens[0] == "VIEW":
+        return load_alert_dashboard(alerts)
+    background = bool(tokens and tokens[0] == "BACKGROUND")
+    return evaluate_alerts(alerts, force=not background, background=background)
 
 
 def load_event_calendar(
@@ -866,25 +882,3 @@ def _display_value(value: object) -> str:
     if isinstance(value, int):
         return f"{value:,}"
     return str(value)
-
-
-def _alert_value(quote: Quote, field: str) -> float | None:
-    return {
-        "PRICE": quote.price,
-        "CHANGE_PCT": quote.change_percent,
-        "VOLUME": quote.volume,
-        "BID": quote.bid,
-        "ASK": quote.ask,
-    }.get(field)
-
-
-def _compare(value: float, operator: str, threshold: float) -> bool:
-    if operator == ">":
-        return value > threshold
-    if operator == ">=":
-        return value >= threshold
-    if operator == "<":
-        return value < threshold
-    if operator == "<=":
-        return value <= threshold
-    return value == threshold

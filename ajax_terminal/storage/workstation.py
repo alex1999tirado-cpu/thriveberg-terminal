@@ -1033,11 +1033,63 @@ class AlertRule:
     last_triggered_at: str | None = None
     created_at: str = ""
     updated_at: str = ""
+    kind: str = "MARKET"
+    cooldown_seconds: int = 300
+    last_state: bool = False
+    last_evaluated_at: str | None = None
+    last_fingerprint: str = ""
+    feed_initialized: bool = False
+    last_error: str = ""
+    last_provider: str = ""
+    last_quality: str = "UNAVAILABLE"
+    trigger_count: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class PendingAlertEvent:
+    fingerprint: str
+    occurred_at: str
+    title: str
+    detail: str = ""
+    url: str = ""
+    value: float | None = None
+    provider: str = ""
+    quality: str = "UNAVAILABLE"
+
+
+@dataclass(frozen=True, slots=True)
+class AlertEvent:
+    id: int | None
+    alert_id: int
+    fingerprint: str
+    occurred_at: str
+    value: float | None
+    title: str
+    detail: str
+    url: str
+    provider: str
+    quality: str
+    acknowledged: bool
+    created_at: str
 
 
 class AlertStore:
-    FIELDS = {"PRICE", "CHANGE_PCT", "VOLUME", "BID", "ASK"}
-    OPERATORS = {">", ">=", "<", "<=", "="}
+    FIELDS_BY_KIND = {
+        "MARKET": {"PRICE", "CHANGE_PCT", "VOLUME", "BID", "ASK"},
+        "FUNDAMENTAL": {
+            "MARKET_CAP", "PE", "FORWARD_PE", "DIVIDEND_YIELD", "REVENUE_GROWTH",
+            "OPERATING_MARGIN", "ROE", "BETA",
+        },
+        "FILING": {"FILING_ANY", "FILING_ANNUAL", "FILING_QUARTERLY"},
+        "NEWS": {"NEWS"},
+        "EVENT": {"EVENT_ANY", "EVENT_EARNINGS", "EVENT_EX_DIVIDEND", "EVENT_DIVIDEND_PAYMENT"},
+        "PORTFOLIO_RISK": {
+            "VOLATILITY_PCT", "VAR_95_PCT", "VAR_99_PCT", "ES_95_PCT",
+            "MAX_DRAWDOWN_PCT", "BETA", "COVERAGE_PCT",
+        },
+    }
+    FIELDS = set().union(*FIELDS_BY_KIND.values())
+    OPERATORS = {">", ">=", "<", "<=", "=", "NEW"}
 
     def __init__(self, path: Path | str = DEFAULT_DB_PATH) -> None:
         self.path = Path(path)
@@ -1052,54 +1104,315 @@ class AlertStore:
             rows = connection.execute(query).fetchall()
         return [self._from_row(row) for row in rows]
 
-    def add(self, symbol: str, field: str, operator: str, threshold: float) -> AlertRule:
+    def add(
+        self,
+        symbol: str,
+        field: str,
+        operator: str,
+        threshold: float,
+        *,
+        kind: str = "MARKET",
+        cooldown_seconds: int = 300,
+    ) -> AlertRule:
         clean_symbol = symbol.strip().upper()
         clean_field = field.strip().upper()
         clean_operator = operator.strip()
+        clean_kind = kind.strip().upper() or "MARKET"
         if not clean_symbol:
-            raise ValueError("Symbol cannot be blank")
-        if clean_field not in self.FIELDS:
+            raise ValueError("Alert target cannot be blank")
+        if clean_kind not in self.FIELDS_BY_KIND:
+            raise ValueError(f"Unsupported alert kind: {clean_kind}")
+        if clean_field not in self.FIELDS_BY_KIND[clean_kind]:
             raise ValueError(f"Unsupported alert field: {clean_field}")
         if clean_operator not in self.OPERATORS:
             raise ValueError(f"Unsupported alert operator: {clean_operator}")
+        if clean_kind in {"FILING", "NEWS"} and clean_operator != "NEW":
+            raise ValueError(f"{clean_kind} alerts require the NEW operator")
+        if clean_kind not in {"FILING", "NEWS"} and clean_operator == "NEW":
+            raise ValueError(f"{clean_kind} alerts require a numeric operator")
+        threshold_value = float(threshold)
+        if not math.isfinite(threshold_value):
+            raise ValueError("Alert threshold must be finite")
+        if clean_kind == "EVENT":
+            if clean_operator != "<=":
+                raise ValueError("EVENT alerts require the <= operator")
+            if threshold_value < 0 or threshold_value > 365:
+                raise ValueError("EVENT alert horizon must be between 0 and 365 days")
+        cooldown = max(0, min(int(cooldown_seconds), 7 * 24 * 3600))
         now = _now()
         with get_connection(self.path) as connection:
             cursor = connection.execute(
                 """
                 INSERT INTO alerts
-                    (symbol, field, operator, threshold, enabled, created_at, updated_at)
-                VALUES (?, ?, ?, ?, 1, ?, ?)
+                    (symbol, field, operator, threshold, enabled, created_at, updated_at,
+                     kind, cooldown_seconds)
+                VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?)
                 """,
-                (clean_symbol, clean_field, clean_operator, float(threshold), now, now),
+                (
+                    clean_symbol, clean_field, clean_operator, threshold_value,
+                    now, now, clean_kind, cooldown,
+                ),
             )
             connection.commit()
             alert_id = int(cursor.lastrowid)
-        return AlertRule(alert_id, clean_symbol, clean_field, clean_operator, float(threshold), True, created_at=now, updated_at=now)
+        return AlertRule(
+            alert_id, clean_symbol, clean_field, clean_operator, threshold_value,
+            True, created_at=now, updated_at=now, kind=clean_kind,
+            cooldown_seconds=cooldown,
+        )
 
     def set_enabled(self, alert_id: int, enabled: bool) -> None:
         with get_connection(self.path) as connection:
             connection.execute(
-                "UPDATE alerts SET enabled = ?, updated_at = ? WHERE id = ?",
-                (int(enabled), _now(), int(alert_id)),
+                """
+                UPDATE alerts SET enabled = ?,
+                    last_state = CASE WHEN ? = 0 THEN 0 ELSE last_state END,
+                    updated_at = ?
+                WHERE id = ?
+                """,
+                (int(enabled), int(enabled), _now(), int(alert_id)),
             )
             connection.commit()
 
     def record_evaluation(self, alert_id: int, value: float | None, triggered: bool) -> None:
-        now = _now()
+        self.record_numeric_evaluation(
+            alert_id,
+            value,
+            triggered,
+            provider="LEGACY",
+            quality="UNAVAILABLE",
+        )
+
+    def record_numeric_evaluation(
+        self,
+        alert_id: int,
+        value: float | None,
+        active: bool,
+        *,
+        provider: str,
+        quality: str,
+        title: str = "",
+        detail: str = "",
+        url: str = "",
+        observed_at: str | None = None,
+    ) -> AlertEvent | None:
+        now = observed_at or _now()
         with get_connection(self.path) as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT * FROM alerts WHERE id = ?", (int(alert_id),)
+            ).fetchone()
+            if row is None:
+                return None
+            transitioned = bool(active and not bool(row["last_state"]))
+            event: AlertEvent | None = None
+            if transitioned:
+                fingerprint = f"STATE:{int(alert_id)}:{now}"
+                cursor = connection.execute(
+                    """
+                    INSERT OR IGNORE INTO alert_events (
+                        alert_id, fingerprint, occurred_at, value, title, detail, url,
+                        provider, quality, acknowledged, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
+                    """,
+                    (
+                        int(alert_id), fingerprint, now, value,
+                        title or f"{row['symbol']} {row['field']} {row['operator']} {row['threshold']:g}",
+                        " ".join(detail.split())[:500], url.strip()[:1000],
+                        " ".join(provider.split())[:80], quality.strip().upper()[:24], now,
+                    ),
+                )
+                if cursor.rowcount:
+                    event_row = connection.execute(
+                        "SELECT * FROM alert_events WHERE id = ?", (cursor.lastrowid,)
+                    ).fetchone()
+                    event = self._event_from_row(event_row)
             connection.execute(
                 """
                 UPDATE alerts SET last_value = ?,
+                    last_state = ?,
+                    last_evaluated_at = ?,
                     last_triggered_at = CASE WHEN ? THEN ? ELSE last_triggered_at END,
+                    last_error = '', last_provider = ?, last_quality = ?,
+                    trigger_count = trigger_count + ?,
                     updated_at = ?
                 WHERE id = ?
                 """,
-                (value, int(triggered), now, now, int(alert_id)),
+                (
+                    value, int(active), now, int(event is not None), now,
+                    " ".join(provider.split())[:80], quality.strip().upper()[:24],
+                    int(event is not None), now, int(alert_id),
+                ),
+            )
+            connection.commit()
+        return event
+
+    def record_feed_evaluation(
+        self,
+        alert_id: int,
+        items: list[PendingAlertEvent],
+        *,
+        prime_initial: bool,
+        provider: str,
+        quality: str,
+        current_value: float | None = None,
+        observed_at: str | None = None,
+    ) -> tuple[AlertEvent, ...]:
+        now = observed_at or _now()
+        created: list[AlertEvent] = []
+        with get_connection(self.path) as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            rule = connection.execute(
+                "SELECT * FROM alerts WHERE id = ?", (int(alert_id),)
+            ).fetchone()
+            if rule is None:
+                return ()
+            suppress = bool(prime_initial and not bool(rule["feed_initialized"]))
+            news_cutoff: datetime | None = None
+            if rule["kind"] == "NEWS" and rule["last_evaluated_at"]:
+                try:
+                    news_cutoff = datetime.fromisoformat(rule["last_evaluated_at"])
+                    if news_cutoff.tzinfo is None:
+                        news_cutoff = news_cutoff.replace(tzinfo=timezone.utc)
+                    else:
+                        news_cutoff = news_cutoff.astimezone(timezone.utc)
+                except ValueError:
+                    news_cutoff = None
+            for item in items:
+                fingerprint = " ".join(item.fingerprint.split())[:240]
+                if not fingerprint:
+                    continue
+                seen = connection.execute(
+                    """
+                    INSERT OR IGNORE INTO alert_seen_items (alert_id, fingerprint, seen_at)
+                    VALUES (?, ?, ?)
+                    """,
+                    (int(alert_id), fingerprint, now),
+                )
+                stale_news = False
+                if news_cutoff is not None:
+                    try:
+                        published = datetime.fromisoformat(item.occurred_at)
+                        if published.tzinfo is None:
+                            published = published.replace(tzinfo=timezone.utc)
+                        else:
+                            published = published.astimezone(timezone.utc)
+                        stale_news = published <= news_cutoff
+                    except ValueError:
+                        pass
+                if not seen.rowcount or suppress or stale_news:
+                    continue
+                cursor = connection.execute(
+                    """
+                    INSERT OR IGNORE INTO alert_events (
+                        alert_id, fingerprint, occurred_at, value, title, detail, url,
+                        provider, quality, acknowledged, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
+                    """,
+                    (
+                        int(alert_id), fingerprint, item.occurred_at, item.value,
+                        " ".join(item.title.split())[:240], " ".join(item.detail.split())[:500],
+                        item.url.strip()[:1000], " ".join(item.provider.split())[:80],
+                        item.quality.strip().upper()[:24], now,
+                    ),
+                )
+                if cursor.rowcount:
+                    event_row = connection.execute(
+                        "SELECT * FROM alert_events WHERE id = ?", (cursor.lastrowid,)
+                    ).fetchone()
+                    created.append(self._event_from_row(event_row))
+            latest = items[0].fingerprint if items else str(rule["last_fingerprint"] or "")
+            connection.execute(
+                """
+                UPDATE alerts SET last_value = ?, last_state = 0,
+                    last_evaluated_at = ?, last_fingerprint = ?, feed_initialized = 1,
+                    last_triggered_at = CASE WHEN ? > 0 THEN ? ELSE last_triggered_at END,
+                    last_error = '', last_provider = ?, last_quality = ?,
+                    trigger_count = trigger_count + ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (
+                    current_value, now, latest[:240], len(created), now,
+                    " ".join(provider.split())[:80], quality.strip().upper()[:24],
+                    len(created), now, int(alert_id),
+                ),
+            )
+            connection.commit()
+        return tuple(created)
+
+    def record_failure(
+        self,
+        alert_id: int,
+        message: str,
+        *,
+        provider: str = "",
+        quality: str = "UNAVAILABLE",
+        observed_at: str | None = None,
+    ) -> None:
+        now = observed_at or _now()
+        with get_connection(self.path) as connection:
+            connection.execute(
+                """
+                UPDATE alerts SET last_evaluated_at = ?, last_error = ?,
+                    last_provider = ?, last_quality = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (
+                    now, " ".join(message.split())[:240], " ".join(provider.split())[:80],
+                    quality.strip().upper()[:24], now, int(alert_id),
+                ),
             )
             connection.commit()
 
+    def events(
+        self,
+        *,
+        limit: int = 500,
+        unacknowledged_only: bool = False,
+    ) -> list[AlertEvent]:
+        row_limit = max(1, min(int(limit), 10_000))
+        with get_connection(self.path) as connection:
+            if unacknowledged_only:
+                rows = connection.execute(
+                    """
+                    SELECT * FROM alert_events
+                    WHERE acknowledged = 0
+                    ORDER BY occurred_at DESC, id DESC LIMIT ?
+                    """,
+                    (row_limit,),
+                ).fetchall()
+            else:
+                rows = connection.execute(
+                    """
+                    SELECT * FROM alert_events
+                    ORDER BY occurred_at DESC, id DESC LIMIT ?
+                    """,
+                    (row_limit,),
+                ).fetchall()
+        return [self._event_from_row(row) for row in rows]
+
+    def acknowledge(self, event_id: int | None = None) -> None:
+        with get_connection(self.path) as connection:
+            if event_id is None:
+                connection.execute("UPDATE alert_events SET acknowledged = 1")
+            else:
+                connection.execute(
+                    "UPDATE alert_events SET acknowledged = 1 WHERE id = ?",
+                    (int(event_id),),
+                )
+            connection.commit()
+
+    def unacknowledged_count(self) -> int:
+        with get_connection(self.path) as connection:
+            row = connection.execute(
+                "SELECT COUNT(*) AS total FROM alert_events WHERE acknowledged = 0"
+            ).fetchone()
+        return int(row["total"] if row is not None else 0)
+
     def delete(self, alert_id: int) -> None:
         with get_connection(self.path) as connection:
+            connection.execute("DELETE FROM alert_seen_items WHERE alert_id = ?", (int(alert_id),))
+            connection.execute("DELETE FROM alert_events WHERE alert_id = ?", (int(alert_id),))
             connection.execute("DELETE FROM alerts WHERE id = ?", (int(alert_id),))
             connection.commit()
 
@@ -1108,7 +1421,22 @@ class AlertStore:
         return AlertRule(
             row["id"], row["symbol"], row["field"], row["operator"], row["threshold"],
             bool(row["enabled"]), row["last_value"], row["last_triggered_at"],
-            row["created_at"], row["updated_at"]
+            row["created_at"], row["updated_at"], row["kind"],
+            int(row["cooldown_seconds"]), bool(row["last_state"]),
+            row["last_evaluated_at"], row["last_fingerprint"],
+            bool(row["feed_initialized"]), row["last_error"], row["last_provider"],
+            row["last_quality"], int(row["trigger_count"]),
+        )
+
+    @staticmethod
+    def _event_from_row(row) -> AlertEvent:
+        return AlertEvent(
+            int(row["id"]), int(row["alert_id"]), str(row["fingerprint"]),
+            str(row["occurred_at"]),
+            float(row["value"]) if row["value"] is not None else None,
+            str(row["title"]), str(row["detail"]), str(row["url"]),
+            str(row["provider"]), str(row["quality"]), bool(row["acknowledged"]),
+            str(row["created_at"]),
         )
 
 

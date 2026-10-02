@@ -33,6 +33,7 @@ from PySide6.QtWidgets import (
     QSizePolicy,
     QStackedWidget,
     QStyle,
+    QSystemTrayIcon,
     QTableWidget,
     QTableWidgetItem,
     QTabWidget,
@@ -714,6 +715,10 @@ class AjaxDesktopWindow(QMainWindow):
         self._suggestions: list[SecuritySuggestion] = []
         self._security_directory: dict[str, tuple[str, str]] = {}
         self._pending_methodology_symbol: str | None = None
+        self._alert_worker: _Loader | None = None
+        self._alert_session_serial = 0
+        self._alert_worker_session: int | None = None
+        self._alert_started_once = False
 
         host = QWidget()
         host_layout = QVBoxLayout(host)
@@ -776,6 +781,14 @@ class AjaxDesktopWindow(QMainWindow):
         self.clock_timer.setInterval(1_000)
         self.clock_timer.timeout.connect(self._update_clock)
         self.clock_timer.start()
+        self.alert_timer = QTimer(self)
+        self.alert_timer.setInterval(30_000)
+        self.alert_timer.timeout.connect(self._run_background_alerts)
+        self._tray_icon: QSystemTrayIcon | None = None
+        if self._session_persistence_enabled and QSystemTrayIcon.isSystemTrayAvailable():
+            self._tray_icon = QSystemTrayIcon(thriveberg_icon(), self)
+            self._tray_icon.setToolTip("THRIVEBERG Terminal alerts")
+            self._tray_icon.show()
         self._update_clock()
         self._set_route_labels(self.current_route)
         self._show_message("LOADING WORKSPACE", "PREPARING MARKET MONITOR", ready=False)
@@ -1201,6 +1214,7 @@ class AjaxDesktopWindow(QMainWindow):
             self.auth_status.setText(str(message).upper())
             self.auth_status.setStyleSheet(f"color:{AJAX_AMBER}")
             return
+        self._alert_session_serial += 1
         self._authenticated = True
         self.settings.setValue("login/name", self.auth_email.text().strip())
         self.settings.sync()
@@ -1313,6 +1327,7 @@ class AjaxDesktopWindow(QMainWindow):
         self.workspace_tabs.setCurrentIndex(0)
         self._configure_workspace_window()
         self.social_workspace.activate()
+        self._start_background_alerts()
         if self._session_persistence_enabled:
             restored_symbol = str(self.settings.value("session/current_symbol", "") or "").strip().upper()
             restored_history = self.settings.value("session/history", []) or []
@@ -1366,6 +1381,11 @@ class AjaxDesktopWindow(QMainWindow):
             return
         session = self.social_service.session
         provider = self.social_service.provider
+        self.alert_timer.stop()
+        self._alert_session_serial += 1
+        self._alert_started_once = False
+        self.alert_status_label.setText("ALRT BG --")
+        self.alert_status_label.setStyleSheet(f"color:{AJAX_MUTED}")
         self._authenticated = False
         self.social_workspace.poll_timer.stop()
         self.current_symbol = ""
@@ -1439,6 +1459,9 @@ class AjaxDesktopWindow(QMainWindow):
         row.addWidget(self.utc_clock)
         row.addWidget(QLabel("DATA: AUTO"))
         row.addWidget(QLabel("MARKET WORKSTATION"))
+        self.alert_status_label = QLabel("ALRT BG --")
+        self.alert_status_label.setStyleSheet(f"color:{AJAX_MUTED}")
+        row.addWidget(self.alert_status_label)
         row.addStretch(1)
         self.user_label = QLabel("SIGNED OUT")
         self.user_label.setStyleSheet(f"color:{AJAX_TEXT}")
@@ -2121,9 +2144,10 @@ class AjaxDesktopWindow(QMainWindow):
         workspace.command_requested.connect(self.execute_text)
         self._replace_workspace(workspace)
         triggered = sum(1 for item in model.evaluations if item.triggered)
-        self.engine_label.setText("NATIVE QT / MARKET ALERT ENGINE")
+        self.engine_label.setText("NATIVE QT / BACKGROUND ALERT ENGINE")
         self.instrument_bar.setText(
-            f"ALRT   |   {len(model.evaluations)} RULES   |   {triggered} TRIGGERED   |   AUTO REFRESH 30S"
+            f"ALRT   |   {len(model.evaluations)} RULES   |   {triggered} ACTIVE   |   "
+            f"{model.unacknowledged} UNREAD   |   BACKGROUND SCHEDULER"
         )
         self.popout_button.setEnabled(False)
         QTimer.singleShot(0, self.workspace_ready.emit)
@@ -2672,6 +2696,81 @@ class AjaxDesktopWindow(QMainWindow):
         self.local_clock.setText(f"{local:%H:%M:%S} {local_zone}")
         self.utc_clock.setText(utc.strftime("UTC %H:%M:%S"))
 
+    def _start_background_alerts(self) -> None:
+        if not self._session_persistence_enabled or not self._authenticated:
+            return
+        if not self.alert_timer.isActive():
+            self.alert_timer.start()
+        if not self._alert_started_once:
+            self._alert_started_once = True
+            QTimer.singleShot(5_000, self._run_background_alerts)
+
+    @Slot()
+    def _run_background_alerts(self) -> None:
+        if not self._authenticated or self._alert_worker is not None:
+            return
+        worker = _Loader(lambda: load_alerts(("BACKGROUND",)))
+        self._alert_worker = worker
+        self._alert_worker_session = self._alert_session_serial
+        self.alert_status_label.setText("ALRT BG CHECK")
+        self.alert_status_label.setStyleSheet(f"color:{AJAX_AMBER}")
+        worker.loaded.connect(self._background_alerts_ready, Qt.ConnectionType.QueuedConnection)
+        worker.failed.connect(self._background_alerts_failed, Qt.ConnectionType.QueuedConnection)
+        worker.finished.connect(self._background_alerts_finished, Qt.ConnectionType.QueuedConnection)
+        worker.start()
+
+    @Slot(object)
+    def _background_alerts_ready(self, model: object) -> None:
+        if (
+            not self._authenticated
+            or self._alert_worker_session != self._alert_session_serial
+        ):
+            return
+        unread = int(getattr(model, "unacknowledged", 0))
+        new_events = tuple(getattr(model, "new_events", ()))
+        failures = int(getattr(model, "failures", 0))
+        self.alert_status_label.setText(
+            f"ALRT BG {len(new_events)} HIT" if new_events else
+            f"ALRT BG {failures} ERR" if failures else
+            f"ALRT BG {unread} NEW" if unread else "ALRT BG ARMED"
+        )
+        color = AJAX_RED if new_events or failures else "#62e600"
+        self.alert_status_label.setStyleSheet(f"color:{color};font-weight:bold")
+        if not new_events:
+            return
+        latest = new_events[0]
+        message = latest.title
+        if len(new_events) > 1:
+            message = f"{latest.title}  |  +{len(new_events) - 1} MORE"
+        self.statusBar().showMessage(f"ALERT: {message}", 15_000)
+        QApplication.alert(self, 5_000)
+        if self._tray_icon is not None:
+            self._tray_icon.showMessage(
+                "THRIVEBERG ALERT",
+                message,
+                QSystemTrayIcon.MessageIcon.Warning,
+                12_000,
+            )
+
+    @Slot(str)
+    def _background_alerts_failed(self, message: str) -> None:
+        if (
+            not self._authenticated
+            or self._alert_worker_session != self._alert_session_serial
+        ):
+            return
+        self.alert_status_label.setText("ALRT BG ERROR")
+        self.alert_status_label.setStyleSheet(f"color:{AJAX_RED};font-weight:bold")
+        self.statusBar().showMessage(f"BACKGROUND ALERT ENGINE: {message}", 8_000)
+
+    @Slot()
+    def _background_alerts_finished(self) -> None:
+        worker = self.sender()
+        if worker is self._alert_worker:
+            self._alert_worker = None
+            self._alert_worker_session = None
+        worker.deleteLater()
+
     def closeEvent(self, event) -> None:  # noqa: N802 - Qt callback
         self._persist_session_state()
         if self._session_persistence_enabled:
@@ -2680,6 +2779,10 @@ class AjaxDesktopWindow(QMainWindow):
         self._load_serial += 1
         self._suggestion_serial += 1
         self._suggestion_timer.stop()
+        self.alert_timer.stop()
+        if self._alert_worker is not None and self._alert_worker.isRunning():
+            self._alert_worker.requestInterruption()
+            self._alert_worker.wait()
         for worker in tuple(self._suggestion_workers):
             if worker.isRunning():
                 worker.requestInterruption()
@@ -2696,6 +2799,8 @@ class AjaxDesktopWindow(QMainWindow):
             self._logout_worker.wait(2_000)
         if self._startup_manager is not None:
             self._startup_manager.stop()
+        if self._tray_icon is not None:
+            self._tray_icon.hide()
         social_worker = getattr(self.social_workspace, "_worker", None)
         if social_worker is not None and social_worker.isRunning():
             social_worker.requestInterruption()

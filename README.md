@@ -102,6 +102,23 @@ review. Yahoo chart events do not reliably provide payment dates, so eligible
 dividends are explicitly booked on ex-date; unsupported spin-offs, rights issues
 and cash-in-lieu terms are never inferred.
 
+### Background alert engine
+
+![THRIVEBERG background alert engine](screenshots/background-alert-engine.png)
+
+`ALRT` monitors enabled rules throughout an authenticated desktop session, even
+when another terminal function is open. It supports market prices and volume,
+fundamental ratios, new regulatory filings, verified news, upcoming corporate
+events and portfolio-risk thresholds. Numeric rules fire only when the condition
+crosses from false to true and then rearm; feed rules prime their existing items
+and record only newly observed fingerprints. Every trigger is persisted with its
+source, quality, value, detail and document URL, can be acknowledged, and is
+deduplicated transactionally if manual and background refreshes overlap. Checks
+run every 30 seconds for market rules, two minutes for news, 15 minutes for
+fundamentals/filings/events and 30 minutes for portfolio risk. The engine runs
+locally while THRIVEBERG is open; it is not a cloud alert service when the PC or
+application is off.
+
 THRIVEBERG is a research and market-monitoring workstation. It does not route
 orders, hold client money, or provide investment advice. Every data view carries
 its provider and quality state; unavailable observations remain unavailable.
@@ -176,7 +193,7 @@ thriveberg
 The current beta is distributed as a per-user Windows installer:
 
 ```text
-releases\BETA\THRIVEBERG-Terminal-BETA-016-Setup.exe
+releases\BETA\THRIVEBERG-Terminal-BETA-017-Setup.exe
 ```
 
 It installs THRIVEBERG Terminal under `%LOCALAPPDATA%\Programs`, creates the
@@ -190,13 +207,13 @@ Build the next installer after changing the source with:
 .\build_installer.ps1
 ```
 
-The default build number is `017`, so the preserved Beta 016 installer is never
+The default build number is `018`, so the preserved Beta 017 installer is never
 overwritten accidentally. Pass `-BetaVersion` explicitly for later releases.
 
 The build uses PyInstaller's one-directory layout internally and Inno Setup for
 installation and upgrades. See [`installer/README.md`](installer/README.md).
 Release executables and checksums are intentionally excluded from Git history;
-publish them as GitHub Release assets instead. Beta 016 is not currently code
+publish them as GitHub Release assets instead. Beta 017 is not currently code
 signed, so recipients should verify the accompanying SHA-256 checksum before
 running it and may still see a Microsoft SmartScreen warning.
 
@@ -208,11 +225,11 @@ running it and may still see a Microsoft SmartScreen warning.
   also enforce hostname allowlists.
 - Supabase access is constrained by Auth and row-level security. The bundled
   key is publishable and has no administrative privileges.
-- CI runs 264 tests, `pip-audit`, `detect-secrets`, and Bandit for every change.
+- CI runs 275 tests, `pip-audit`, `detect-secrets`, and Bandit for every change.
 
 See [SECURITY.md](SECURITY.md) for vulnerability reporting and
 [the latest audit](docs/SECURITY_AUDIT.md) for verified results and residual
-risks. Beta 016 is not code signed, so its SHA-256 protects integrity but does
+risks. Beta 017 is not code signed, so its SHA-256 protects integrity but does
 not establish publisher identity.
 
 ## API Configuration
@@ -343,6 +360,11 @@ PORT MAIN RISK SPY 1Y
 PORT MAIN ACTIONS
 ALRT
 ALRT ADD AAPL PRICE > 250
+ALRT ADD FUNDAMENTAL AAPL PE < 20
+ALRT ADD FILING AAPL FILING_ANY
+ALRT ADD NEWS AAPL NEWS
+ALRT ADD EVENT AAPL EVENT_EARNINGS <= 14
+ALRT ADD RISK MAIN VAR_95_PCT > 3%
 AAPL FLDS REVENUE
 DQM
 DQM PROBE
@@ -512,7 +534,7 @@ Development advances one validated beta milestone at a time:
 2. Professional portfolio accounting, performance attribution and broker CSV imports. Completed in the Beta 014 development cycle.
 3. Portfolio risk, factor exposure, correlation and stress scenarios. Completed in the Beta 015 development cycle.
 4. Corporate actions and automatic position/history adjustments. Completed in the Beta 016 development cycle.
-5. Background alerts for prices, fundamentals, filings, news, events and portfolio risk.
+5. Background alerts for prices, fundamentals, filings, news, events and portfolio risk. Completed in the Beta 017 development cycle.
 6. Signed incremental updates, diagnostics and encrypted configuration migration.
 7. Estimate revisions, earnings surprises, guidance and filing comparison.
 8. Multi-leg options, American/binomial valuation and aggregate Greeks.

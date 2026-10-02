@@ -186,6 +186,51 @@ def _ensure_schema(connection: sqlite3.Connection) -> None:
         )
         """
     )
+    _ensure_column(connection, "alerts", "kind", "TEXT NOT NULL DEFAULT 'MARKET'")
+    _ensure_column(connection, "alerts", "cooldown_seconds", "INTEGER NOT NULL DEFAULT 300")
+    _ensure_column(connection, "alerts", "last_state", "INTEGER NOT NULL DEFAULT 0")
+    _ensure_column(connection, "alerts", "last_evaluated_at", "TEXT")
+    _ensure_column(connection, "alerts", "last_fingerprint", "TEXT NOT NULL DEFAULT ''")
+    _ensure_column(connection, "alerts", "feed_initialized", "INTEGER NOT NULL DEFAULT 0")
+    _ensure_column(connection, "alerts", "last_error", "TEXT NOT NULL DEFAULT ''")
+    _ensure_column(connection, "alerts", "last_provider", "TEXT NOT NULL DEFAULT ''")
+    _ensure_column(connection, "alerts", "last_quality", "TEXT NOT NULL DEFAULT 'UNAVAILABLE'")
+    _ensure_column(connection, "alerts", "trigger_count", "INTEGER NOT NULL DEFAULT 0")
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS alert_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            alert_id INTEGER NOT NULL,
+            fingerprint TEXT NOT NULL,
+            occurred_at TEXT NOT NULL,
+            value REAL,
+            title TEXT NOT NULL,
+            detail TEXT NOT NULL DEFAULT '',
+            url TEXT NOT NULL DEFAULT '',
+            provider TEXT NOT NULL DEFAULT '',
+            quality TEXT NOT NULL DEFAULT 'UNAVAILABLE',
+            acknowledged INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            UNIQUE (alert_id, fingerprint)
+        )
+        """
+    )
+    connection.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_alert_events_time
+        ON alert_events (occurred_at DESC, id DESC)
+        """
+    )
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS alert_seen_items (
+            alert_id INTEGER NOT NULL,
+            fingerprint TEXT NOT NULL,
+            seen_at TEXT NOT NULL,
+            PRIMARY KEY (alert_id, fingerprint)
+        )
+        """
+    )
     connection.execute(
         """
         CREATE TABLE IF NOT EXISTS saved_screens (

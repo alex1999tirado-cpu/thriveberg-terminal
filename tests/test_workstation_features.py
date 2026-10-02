@@ -132,6 +132,40 @@ def test_desktop_marks_clean_shutdown_and_persists_last_route(tmp_path) -> None:
     assert settings.value("session/current_symbol") == "MSFT"
 
 
+def test_desktop_background_alert_scheduler_starts_and_stops(tmp_path) -> None:
+    app = _app()
+    settings = QSettings(str(tmp_path / "alert-session.ini"), QSettings.Format.IniFormat)
+    window = AjaxDesktopWindow(require_login=True, settings=settings)
+    window._authenticated = True
+    window._alert_started_once = True
+
+    window._start_background_alerts()
+
+    assert window.alert_timer.isActive()
+    assert window.alert_timer.interval() == 30_000
+
+    window.close()
+    app.processEvents()
+    assert not window.alert_timer.isActive()
+
+
+def test_desktop_ignores_background_alerts_from_a_previous_session(tmp_path) -> None:
+    app = _app()
+    settings = QSettings(str(tmp_path / "alert-isolation.ini"), QSettings.Format.IniFormat)
+    window = AjaxDesktopWindow(require_login=True, settings=settings)
+    window._authenticated = True
+    window._alert_session_serial = 2
+    window._alert_worker_session = 1
+
+    window._background_alerts_ready(
+        AlertsLoad((), datetime.now(timezone.utc), failures=1, unacknowledged=4)
+    )
+
+    assert window.alert_status_label.text() == "ALRT BG --"
+    window.close()
+    app.processEvents()
+
+
 def test_evt_toolbar_uses_the_active_security_context(tmp_path) -> None:
     app = _app()
     settings = QSettings(str(tmp_path / "evt-toolbar.ini"), QSettings.Format.IniFormat)
