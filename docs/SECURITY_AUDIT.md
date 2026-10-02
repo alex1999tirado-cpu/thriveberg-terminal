@@ -9,8 +9,8 @@ Windows installer.
 - `pip-audit`: no known vulnerable installed dependencies.
 - Bandit: no medium- or high-severity findings after hardening.
 - `detect-secrets`: no new findings in the changed source, test or documentation files.
-- Installer SHA-256: `E0DF035854BE9E47B4B7BD1545862391F6AF87C8C76B7787A671B96CBF594CE4`.
-- Packaged executable SHA-256: `6AB89E9B3FC36FB1931B19559631154F556F775F7D954957A80128CFD7A5477F`.
+- Installer SHA-256: `3DB8874CD2A1138F77D5BCF5B999AC7FD0B22D9DF41686F7422FE7CBF79991D0`.
+- Packaged executable SHA-256: `B7B4A921343D20C443110DAB3386CCD886CAFA03810D57FDF125ACD45531C5D1`.
 - Microsoft Defender custom scans: zero detections for the Beta 018 installer
   and packaged executable.
 - Packaged and installed smoke tests: successful `DIAG` and `UPD` renders at
