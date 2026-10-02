@@ -5,7 +5,7 @@ Windows installer.
 
 ## Results
 
-- `pytest`: 288 passed.
+- `pytest`: 290 passed.
 - `pip-audit`: no known vulnerable installed dependencies.
 - Bandit: no medium- or high-severity findings after hardening.
 - `detect-secrets`: no new findings in the changed source, test or documentation files.

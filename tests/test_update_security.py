@@ -86,9 +86,10 @@ def test_signed_manifest_rejects_mismatched_installer_name() -> None:
 
 
 class _DownloadResponse:
-    def __init__(self, payload: bytes, status_code: int) -> None:
+    def __init__(self, payload: bytes, status_code: int, *, url: str = "") -> None:
         self.payload = payload
         self.status_code = status_code
+        self.url = url
 
     def raise_for_status(self) -> None:
         return None
@@ -124,14 +125,15 @@ class _CatalogSession:
 
 
 class _DownloadSession:
-    def __init__(self, payload: bytes, status_code: int = 206) -> None:
+    def __init__(self, payload: bytes, status_code: int = 206, *, response_url: str = "") -> None:
         self.payload = payload
         self.status_code = status_code
+        self.response_url = response_url
         self.headers: dict[str, str] = {}
 
     def get(self, _url: str, *, headers: dict[str, str], timeout, stream: bool):
         self.headers = headers
-        return _DownloadResponse(self.payload, self.status_code)
+        return _DownloadResponse(self.payload, self.status_code, url=self.response_url)
 
 
 def test_update_download_resumes_and_rechecks_signed_hash(tmp_path: Path) -> None:
@@ -153,6 +155,39 @@ def test_update_download_resumes_and_rechecks_signed_hash(tmp_path: Path) -> Non
     assert installed.read_bytes() == installer
     assert progress[-1] == (len(installer), len(installer))
     assert installed.with_suffix(".update.json").is_file()
+
+
+def test_update_download_accepts_official_github_asset_redirect(tmp_path: Path) -> None:
+    _payload, manifest, signature, public, installer = _signed_manifest()
+    release = verify_signed_manifest(manifest, signature, public_key_pem=public)
+    redirect = (
+        "https://release-assets.githubusercontent.com/github-production-release-asset/"
+        "1234/asset-id?download=1&token=temporary"
+    )
+
+    installed = download_signed_release(
+        release,
+        destination=tmp_path,
+        session=_DownloadSession(installer, status_code=200, response_url=redirect),
+    )
+
+    assert installed.read_bytes() == installer
+
+
+def test_update_download_rejects_unapproved_redirect(tmp_path: Path) -> None:
+    _payload, manifest, signature, public, installer = _signed_manifest()
+    release = verify_signed_manifest(manifest, signature, public_key_pem=public)
+
+    with pytest.raises(UpdateSecurityError, match="redirect"):
+        download_signed_release(
+            release,
+            destination=tmp_path,
+            session=_DownloadSession(
+                installer,
+                status_code=200,
+                response_url="https://downloads.example.invalid/release.exe",
+            ),
+        )
 
 
 def test_update_download_rejects_path_traversal(tmp_path: Path) -> None:

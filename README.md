@@ -229,7 +229,7 @@ may continue to see a Microsoft SmartScreen warning.
   release metadata.
 - Supabase access is constrained by Auth and row-level security. The bundled
   key is publishable and has no administrative privileges.
-- CI runs 288 tests, `pip-audit`, `detect-secrets`, and Bandit for every change.
+- CI runs 290 tests, `pip-audit`, `detect-secrets`, and Bandit for every change.
 
 See [SECURITY.md](SECURITY.md) for vulnerability reporting and
 [the latest audit](docs/SECURITY_AUDIT.md) for verified results and residual

@@ -25,7 +25,8 @@ RELEASES_API = f"https://api.github.com/repos/{REPOSITORY}/releases?per_page=20"
 _MANIFEST_PATTERN = re.compile(r"THRIVEBERG-BETA-(\d{3})\.update\.json$", re.IGNORECASE)
 _INSTALLER_PATTERN = re.compile(r"THRIVEBERG-Terminal-BETA-(\d{3})-Setup\.exe$", re.IGNORECASE)
 _TAG_PATTERN = re.compile(r"v(\d+\.\d+\.\d+)-beta\.(\d+)$", re.IGNORECASE)
-_ALLOWED_DOWNLOAD_HOSTS = frozenset({"github.com", "objects.githubusercontent.com"})
+_ALLOWED_SIGNED_HOSTS = frozenset({"github.com"})
+_ALLOWED_REDIRECT_HOSTS = frozenset({"github.com", "release-assets.githubusercontent.com"})
 _MAX_MANIFEST_BYTES = 128 * 1024
 _MAX_SIGNATURE_BYTES = 4096
 _MAX_INSTALLER_BYTES = 800 * 1024 * 1024
@@ -212,7 +213,7 @@ def download_signed_release(
         response = client.get(release.installer_url, headers=headers, timeout=(10, 60), stream=True)
         response.raise_for_status()
         final_url = str(getattr(response, "url", "") or release.installer_url)
-        _validate_https_url(final_url)
+        _validate_response_url(final_url)
         append = existing > 0 and response.status_code == 206
         completed = existing if append else 0
         mode = "ab" if append else "wb"
@@ -273,7 +274,7 @@ def _download_small(client: requests.Session, url: str, limit: int) -> bytes:
     _validate_https_url(url)
     response = client.get(url, headers={"User-Agent": "THRIVEBERG-Terminal-Updater"}, timeout=(5, 15))
     response.raise_for_status()
-    _validate_https_url(str(getattr(response, "url", "") or url))
+    _validate_response_url(str(getattr(response, "url", "") or url))
     content = response.content
     if len(content) > limit:
         raise UpdateSecurityError("Update metadata exceeds the permitted size")
@@ -333,12 +334,27 @@ def _validated_release(
 
 def _validate_https_url(url: str) -> None:
     parsed = urlparse(url)
-    if parsed.scheme != "https" or (parsed.hostname or "").lower() not in _ALLOWED_DOWNLOAD_HOSTS:
+    if parsed.scheme != "https" or (parsed.hostname or "").lower() not in _ALLOWED_SIGNED_HOSTS:
         raise UpdateSecurityError("Update URL is not an approved HTTPS endpoint")
     if parsed.username or parsed.password:
         raise UpdateSecurityError("Update URL contains credentials")
     if parsed.query or parsed.fragment:
         raise UpdateSecurityError("Update URL contains unsigned query or fragment data")
+
+
+def _validate_response_url(url: str) -> None:
+    parsed = urlparse(url)
+    host = (parsed.hostname or "").lower()
+    if parsed.scheme != "https" or host not in _ALLOWED_REDIRECT_HOSTS:
+        raise UpdateSecurityError("Update redirect is not an approved HTTPS endpoint")
+    if parsed.username or parsed.password or parsed.fragment:
+        raise UpdateSecurityError("Update redirect contains credentials or a fragment")
+    if host == "github.com":
+        if parsed.query:
+            raise UpdateSecurityError("GitHub update URL contains unsigned query data")
+        return
+    if not parsed.path.startswith("/github-production-release-asset/"):
+        raise UpdateSecurityError("Update redirect is not an official GitHub release asset")
 
 
 def _sha256(path: Path) -> str:
