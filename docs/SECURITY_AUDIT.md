@@ -1,21 +1,22 @@
 # Security audit - 2026-10-02
 
-Scope: THRIVEBERG Terminal 0.5.0 Beta 014 source tree, packaged application and
+Scope: THRIVEBERG Terminal 0.5.0 Beta 015 source tree, packaged application and
 Windows installer.
 
 ## Results
 
-- `pytest`: 248 passed.
+- `pytest`: 255 passed.
 - `pip-audit`: no known vulnerable installed dependencies.
 - Bandit: no medium- or high-severity findings after hardening.
 - `detect-secrets`: no new findings in the changed source, test or documentation files.
-- Installer SHA-256: `E337282CD0E833BC343E68E486586217A77DAE01C09051B4CCD96043DF5DE56A`.
-- Packaged executable SHA-256: `6A071156C5A109F99BC7407E312394B7B4A0957C62759BFC6A71B6F49438758C`.
-- Microsoft Defender custom scans: zero detections for the Beta 014 installer
+- Installer SHA-256: `56956160B0829FA9AA2332D20B3D3C7AA719C1D1509D16F24DC8B6DBC9DD2619`.
+- Packaged executable SHA-256: `65A344875DDF8D8BF1527A965B34E48042E7F596DDEDA6D6BE96F548CB66F3CF`.
+- Microsoft Defender custom scans: zero detections for the Beta 015 installer
   and packaged executable.
-- Packaged smoke test: successful `PORT` render at 1920x1080 using an isolated
-  multi-currency ledger with trades, realized P&L, income, fees and cash.
-- Local `UPD` inventory: Beta 014 staged with a verified checksum while Beta 013
+- Packaged smoke test: successful `PORT MAIN RISK SPY 1Y` render at 1920x1080
+  using an isolated multi-currency ledger, 247 observed sessions, historical FX
+  conversion and 100% market-value history coverage.
+- Local `UPD` inventory: Beta 015 staged with a verified checksum while Beta 014
   remains available.
 
 ## Hardening included
@@ -32,7 +33,7 @@ Windows installer.
 
 ## Residual risks
 
-- Beta 014 is not code signed. SHA-256 verification detects modification but
+- Beta 015 is not code signed. SHA-256 verification detects modification but
   does not establish publisher identity.
 - Public market-data endpoints can be delayed, rate limited, changed, or
   unavailable. Quality labels must remain visible and are not a trading SLA.

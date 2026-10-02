@@ -74,6 +74,19 @@ NAV and security-level contribution. Broker CSV files are always previewed
 before application; IBKR, DEGIRO, Trading 212 and generic exports are normalized
 with duplicate protection and explicit FX validation.
 
+### Portfolio risk and stress testing
+
+![THRIVEBERG current-weight portfolio risk](screenshots/portfolio-risk.png)
+
+`PORT <portfolio> RISK <benchmark> <period>` calculates base-currency daily
+returns from observed price and FX histories. The four risk views report
+coverage, annualized return and volatility, historical VaR/expected shortfall,
+drawdown, Sharpe, benchmark beta, marginal contribution, pairwise correlation,
+factor exposures and stress P&L. Factor loadings use observed liquid proxies
+(`SPY`, `IWM`, `IWD`, `IWF`, `MTUM` and `QUAL` by default). Historical replays
+are labelled `OBSERVED`; linear factor, FX and concentration shocks carry an
+`ESTIMATED*` marker and display their methodology.
+
 THRIVEBERG is a research and market-monitoring workstation. It does not route
 orders, hold client money, or provide investment advice. Every data view carries
 its provider and quality state; unavailable observations remain unavailable.
@@ -99,7 +112,7 @@ its provider and quality state; unavailable observations remain unavailable.
 - Equity research functions for financial analysis, estimates, recommendations, relative valuation, dividends, corporate events, and screening.
 - Native PySide6 chart workstations: TradingView Lightweight Charts for `GP`, Apache ECharts for analytical 2D views, and PyVista/VTK for the interactive `OVDV` volatility surface.
 - Persistent SQLite cache and watchlist storage.
-- Native workstation tools: editable named watchlists (`WATC`); multi-currency portfolio accounting, performance attribution and broker CSV import (`PORT`); market alerts (`ALRT`); saved multi-factor screens (`EQS`); and a paged corporate calendar (`EVT ALL`) with watchlist, portfolio, market-cap, industry and geographic filters. Global provider and cache diagnostics (`DQM`), field-level source audit (`FLDS`), persistent workspaces (`WSP`), crash recovery, and a checksum-verified local beta manager (`UPD`) are also included.
+- Native workstation tools: editable named watchlists (`WATC`); multi-currency portfolio accounting, performance attribution, broker CSV import, historical risk, factor exposure, correlation and stress testing (`PORT`); market alerts (`ALRT`); saved multi-factor screens (`EQS`); and a paged corporate calendar (`EVT ALL`) with watchlist, portfolio, market-cap, industry and geographic filters. Global provider and cache diagnostics (`DQM`), field-level source audit (`FLDS`), persistent workspaces (`WSP`), crash recovery, and a checksum-verified local beta manager (`UPD`) are also included.
 - Decoupled provider interfaces with cached fallback and explicit unavailable or estimated labels; fictitious market observations are not presented as real data.
 - Analytics for FX forwards, fixed income, Black-Scholes options, volatility, and risk.
 - Supabase-backed user accounts, friend requests, private messages, clickable THRIVEBERG command links, and self-contained friend ZIP export.
@@ -148,7 +161,7 @@ thriveberg
 The current beta is distributed as a per-user Windows installer:
 
 ```text
-releases\BETA\THRIVEBERG-Terminal-BETA-014-Setup.exe
+releases\BETA\THRIVEBERG-Terminal-BETA-015-Setup.exe
 ```
 
 It installs THRIVEBERG Terminal under `%LOCALAPPDATA%\Programs`, creates the
@@ -162,13 +175,13 @@ Build the next installer after changing the source with:
 .\build_installer.ps1
 ```
 
-The default build number is `015`, so the preserved Beta 014 installer is never
+The default build number is `016`, so the preserved Beta 015 installer is never
 overwritten accidentally. Pass `-BetaVersion` explicitly for later releases.
 
 The build uses PyInstaller's one-directory layout internally and Inno Setup for
 installation and upgrades. See [`installer/README.md`](installer/README.md).
 Release executables and checksums are intentionally excluded from Git history;
-publish them as GitHub Release assets instead. Beta 014 is not currently code
+publish them as GitHub Release assets instead. Beta 015 is not currently code
 signed, so recipients should verify the accompanying SHA-256 checksum before
 running it and may still see a Microsoft SmartScreen warning.
 
@@ -180,11 +193,11 @@ running it and may still see a Microsoft SmartScreen warning.
   also enforce hostname allowlists.
 - Supabase access is constrained by Auth and row-level security. The bundled
   key is publishable and has no administrative privileges.
-- CI runs 248 tests, `pip-audit`, `detect-secrets`, and Bandit for every change.
+- CI runs 255 tests, `pip-audit`, `detect-secrets`, and Bandit for every change.
 
 See [SECURITY.md](SECURITY.md) for vulnerability reporting and
 [the latest audit](docs/SECURITY_AUDIT.md) for verified results and residual
-risks. Beta 014 is not code signed, so its SHA-256 protects integrity but does
+risks. Beta 015 is not code signed, so its SHA-256 protects integrity but does
 not establish publisher identity.
 
 ## API Configuration
@@ -311,6 +324,7 @@ WATC NEW EUROPE
 WATC ADD SAN.MC EUROPE
 PORT
 PORT ADD AAPL 10 185 USD
+PORT MAIN RISK SPY 1Y
 ALRT
 ALRT ADD AAPL PRICE > 250
 AAPL FLDS REVENUE
@@ -480,7 +494,7 @@ Development advances one validated beta milestone at a time:
 
 1. Data quality, provider health, cache coverage, source comparison and field provenance. Completed in the Beta 013 development cycle.
 2. Professional portfolio accounting, performance attribution and broker CSV imports. Completed in the Beta 014 development cycle.
-3. Portfolio risk, factor exposure, correlation and stress scenarios.
+3. Portfolio risk, factor exposure, correlation and stress scenarios. Completed in the Beta 015 development cycle.
 4. Corporate actions and automatic position/history adjustments.
 5. Background alerts for prices, fundamentals, filings, news, events and portfolio risk.
 6. Signed incremental updates, diagnostics and encrypted configuration migration.

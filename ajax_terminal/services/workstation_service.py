@@ -16,6 +16,11 @@ from ajax_terminal.models.instrument import AssetClass
 from ajax_terminal.models.quote import DataQuality, Quote, StatementType
 from ajax_terminal.services.equity_research_service import EquityResearchService
 from ajax_terminal.services.market_service import MarketService
+from ajax_terminal.services.portfolio_risk_service import (
+    PortfolioRiskPosition,
+    load_portfolio_risk,
+)
+from ajax_terminal.analytics.portfolio_risk import PortfolioRiskReport
 from ajax_terminal.storage.cache import WatchlistStore
 from ajax_terminal.storage.workstation import (
     AlertRule,
@@ -138,6 +143,9 @@ class PortfolioLoad:
     total_return_percent: float | None = None
     cash_expenses: float = 0.0
     net_external_flow: float = 0.0
+    risk: PortfolioRiskReport | None = None
+    risk_benchmark: str = "SPY"
+    risk_period: str = "1Y"
 
 
 @dataclass(frozen=True, slots=True)
@@ -343,6 +351,17 @@ def load_watchlist(args: Iterable[str], store: WatchlistStore | None = None) -> 
 def load_portfolio(args: Iterable[str], store: PortfolioStore | None = None) -> PortfolioLoad:
     portfolios = store or PortfolioStore()
     tokens = [str(item).strip().upper() for item in args if str(item).strip()]
+    risk_requested = "RISK" in tokens
+    risk_benchmark = "SPY"
+    risk_period = "1Y"
+    if risk_requested:
+        risk_index = tokens.index("RISK")
+        risk_options = tokens[risk_index + 1:]
+        tokens = tokens[:risk_index]
+        if risk_options:
+            risk_benchmark = risk_options[0]
+        if len(risk_options) >= 2:
+            risk_period = risk_options[1]
     name = "MAIN"
     if tokens:
         action = tokens[0]
@@ -509,6 +528,23 @@ def load_portfolio(args: Iterable[str], store: PortfolioStore | None = None) -> 
     total_profit = unrealized_total + realized_total + income_total + cash_expense_total
     cash_balance = portfolios.cash_balance(name)
     net_external_flow = portfolios.net_external_flow(name)
+    net_asset_value = total_market + cash_balance
+    risk = None
+    if risk_requested:
+        risk = load_portfolio_risk(
+            tuple(
+                PortfolioRiskPosition(
+                    line.position.symbol,
+                    line.market_value or 0.0,
+                    (line.quote.currency or line.position.currency or base_currency).upper(),
+                )
+                for line in lines
+            ),
+            net_asset_value=net_asset_value,
+            base_currency=base_currency,
+            benchmark=risk_benchmark,
+            period=risk_period,
+        )
     return PortfolioLoad(
         name,
         tuple(names),
@@ -521,7 +557,7 @@ def load_portfolio(args: Iterable[str], store: PortfolioStore | None = None) -> 
         cash_flows,
         tuple(attribution),
         cash_balance,
-        total_market + cash_balance,
+        net_asset_value,
         realized_total,
         unrealized_total,
         income_total,
@@ -530,6 +566,9 @@ def load_portfolio(args: Iterable[str], store: PortfolioStore | None = None) -> 
         total_profit / invested_capital * 100.0 if invested_capital else None,
         cash_expense_total,
         net_external_flow,
+        risk,
+        risk_benchmark,
+        risk_period,
     )
 
 

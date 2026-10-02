@@ -11,6 +11,7 @@ HISTORY_PERIODS: dict[str, tuple[str, str, int]] = {
     "6M": ("6mo", "1d", 132),
     "YTD": ("ytd", "1d", 180),
     "1Y": ("1y", "1d", 252),
+    "2Y": ("2y", "1d", 504),
     "5Y": ("5y", "1wk", 260),
 }
 
@@ -22,6 +23,7 @@ CHART_INTERVALS: dict[str, tuple[str, ...]] = {
     "6M": ("60m", "1d"),
     "YTD": ("1d", "1wk"),
     "1Y": ("1d", "1wk"),
+    "2Y": ("1d", "1wk"),
     "5Y": ("1d", "1wk"),
 }
 

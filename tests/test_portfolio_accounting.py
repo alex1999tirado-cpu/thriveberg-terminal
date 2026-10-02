@@ -285,13 +285,17 @@ def test_portfolio_workspace_exposes_accounting_and_import_tabs(tmp_path) -> Non
     tabs = workspace.findChild(QTabWidget)
 
     assert tabs is not None
-    assert tabs.count() == 5
+    assert tabs.count() == 9
     assert [tabs.tabText(index) for index in range(tabs.count())] == [
         "1) HOLDINGS",
         "2) ATTRIBUTION",
         "3) TRANSACTIONS",
         "4) CASH LEDGER",
         "5) IMPORT PREVIEW",
+        "6) RISK",
+        "7) FACTORS",
+        "8) CORRELATION",
+        "9) STRESS",
     ]
     assert tabs.currentIndex() == 4
     assert workspace.apply_import_button.isEnabled()
@@ -304,5 +308,48 @@ def test_portfolio_workspace_exposes_accounting_and_import_tabs(tmp_path) -> Non
     workspace._create()
     assert store.base_currency("EURO FUND") == "EUR"
     assert commands[-1] == "PORT EURO FUND"
+    workspace.risk_benchmark.setCurrentText("ACWI")
+    workspace.risk_period.setCurrentText("2Y")
+    workspace._calculate_risk()
+    assert commands[-1] == "PORT MAIN RISK ACWI 2Y"
     workspace.close()
     app.processEvents()
+
+
+def test_named_portfolio_risk_request_preserves_benchmark_and_period(tmp_path, monkeypatch) -> None:
+    store = PortfolioStore(tmp_path / "portfolio.sqlite3")
+    store.create("EURO FUND", "EUR")
+    store.upsert("ASML.AS", 2, 600, "EUR", "EURO FUND")
+
+    async def quotes(_service, symbols, allow_mock=False):
+        assert symbols == ["ASML.AS"]
+        assert not allow_mock
+        return [
+            Quote(
+                "ASML.AS", "ASML Holding", 700.0, currency="EUR",
+                provider="TEST", quality=DataQuality.DELAYED,
+            )
+        ]
+
+    captured: dict[str, object] = {}
+    sentinel = object()
+
+    def risk(positions, **kwargs):
+        captured["positions"] = positions
+        captured.update(kwargs)
+        return sentinel
+
+    monkeypatch.setattr(workstation_service.MarketService, "bulk_quotes", quotes)
+    monkeypatch.setattr(workstation_service, "load_portfolio_risk", risk)
+
+    model = load_portfolio(("EURO", "FUND", "RISK", "ACWI", "2Y"), store)
+
+    assert model.name == "EURO FUND"
+    assert model.risk is sentinel
+    assert model.risk_benchmark == "ACWI"
+    assert model.risk_period == "2Y"
+    assert captured["benchmark"] == "ACWI"
+    assert captured["period"] == "2Y"
+    assert captured["base_currency"] == "EUR"
+    positions = captured["positions"]
+    assert positions[0].symbol == "ASML.AS"

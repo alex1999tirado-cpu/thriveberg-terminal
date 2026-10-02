@@ -84,8 +84,6 @@ class DataAuditWorkspace(QWidget):
                 "OBSERVED, FILED, DERIVED AND ESTIMATED VALUES ARE LABELLED EXPLICITLY"
             )
         )
-        self.action_status = _label("LEDGER READY", AJAX_MUTED)
-        root.addWidget(self.action_status)
         self.table = _table(("FIELD", "VALUE", "UNIT", "SOURCE", "QUALITY", "AS OF", "BASIS", "DOCUMENT"))
         self.table.setRowCount(max(len(model.entries), 1))
         if model.entries:
@@ -294,6 +292,39 @@ class PortfolioWorkspace(QWidget):
                 f"INVESTED CAPITAL {model.invested_capital:,.2f} {model.base_currency}"
             )
         )
+        self.action_status = _label("LEDGER READY", AJAX_MUTED)
+        root.addWidget(self.action_status)
+        risk_controls = _strip()
+        risk_row = risk_controls.layout()
+        risk_row.addWidget(_label("PORTFOLIO RISK", AJAX_CYAN, bold=True))
+        risk_row.addWidget(_label("BENCHMARK", AJAX_TEXT))
+        self.risk_benchmark = QComboBox()
+        self.risk_benchmark.setObjectName("amberField")
+        self.risk_benchmark.setEditable(True)
+        self.risk_benchmark.addItems(("SPY", "ACWI", "EFA", "QQQ", "^STOXX50E"))
+        self.risk_benchmark.setCurrentText(model.risk_benchmark)
+        self.risk_benchmark.setMaximumWidth(120)
+        risk_row.addWidget(self.risk_benchmark)
+        risk_row.addWidget(_label("HISTORY", AJAX_TEXT))
+        self.risk_period = QComboBox()
+        self.risk_period.setObjectName("amberField")
+        self.risk_period.addItems(("1Y", "2Y", "5Y"))
+        self.risk_period.setCurrentText(model.risk_period)
+        self.risk_period.setMaximumWidth(75)
+        risk_row.addWidget(self.risk_period)
+        risk_row.addWidget(_button("CALCULATE / REFRESH", self._calculate_risk, amber=True))
+        risk_row.addStretch(1)
+        if model.risk is None:
+            risk_status = "ON DEMAND"
+            risk_color = AJAX_MUTED
+        elif model.risk.available:
+            risk_status = f"{model.risk.observations} OBS | COVERAGE {model.risk.coverage_percent:.1f}%"
+            risk_color = AJAX_GREEN
+        else:
+            risk_status = model.risk.message
+            risk_color = AJAX_RED
+        risk_row.addWidget(_label(risk_status, risk_color, bold=True))
+        root.addWidget(risk_controls)
         self.tabs = QTabWidget()
         self.tabs.setDocumentMode(True)
         self.table = self._holdings_table()
@@ -301,11 +332,21 @@ class PortfolioWorkspace(QWidget):
         transaction_page, self.transaction_table = self._transaction_page()
         cash_page, self.cash_table = self._cash_page()
         import_page, self.import_table = self._import_page()
+        risk_page, self.risk_contribution_table = self._risk_page()
+        factor_page, self.factor_table = self._factor_page()
+        correlation_page, self.correlation_table = self._correlation_page()
+        stress_page, self.stress_table = self._stress_page()
         self.tabs.addTab(self.table, "1) HOLDINGS")
         self.tabs.addTab(self.attribution_table, "2) ATTRIBUTION")
         self.tabs.addTab(transaction_page, "3) TRANSACTIONS")
         self.tabs.addTab(cash_page, "4) CASH LEDGER")
         self.tabs.addTab(import_page, "5) IMPORT PREVIEW")
+        self.tabs.addTab(risk_page, "6) RISK")
+        self.tabs.addTab(factor_page, "7) FACTORS")
+        self.tabs.addTab(correlation_page, "8) CORRELATION")
+        self.tabs.addTab(stress_page, "9) STRESS")
+        if model.risk is not None:
+            self.tabs.setCurrentIndex(5)
         root.addWidget(self.tabs, 1)
         self.refresh_timer = QTimer(self)
         self.refresh_timer.setInterval(30_000)
@@ -568,6 +609,166 @@ class PortfolioWorkspace(QWidget):
         layout.addWidget(table, 1)
         return page, table
 
+    def _risk_page(self) -> tuple[QWidget, QTableWidget]:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(2)
+        report = self.model.risk
+        metrics = _table(("METRIC", "VALUE", "BASE VALUE", "METRIC", "VALUE", "BASE VALUE", "BASIS"))
+        if report is None:
+            rows = (("STATUS", "NOT CALCULATED", "--", "", "", "", "SELECT CALCULATE / REFRESH"),)
+        elif not report.available:
+            rows = (("STATUS", report.message, "--", "", "", "", report.methodology),)
+        else:
+            rows = (
+                ("OBSERVATIONS", str(report.observations), "--", "HISTORY COVERAGE", _risk_percent(report.coverage_percent / 100.0), "--", f"{report.start_date} / {report.end_date}"),
+                ("ANNUALIZED RETURN", _risk_percent(report.annualized_return), "--", "ANNUALIZED VOLATILITY", _risk_percent(report.annualized_volatility), "--", "CURRENT WEIGHTS / 252 DAYS"),
+                ("HISTORICAL VAR 95%", _risk_percent(report.historical_var_95), fmt_number(report.var_95_value, 2), "HISTORICAL VAR 99%", _risk_percent(report.historical_var_99), fmt_number(report.historical_var_99 * self.model.net_asset_value if report.historical_var_99 is not None else None, 2), "1 DAY / OBSERVED"),
+                ("EXPECTED SHORTFALL 95%", _risk_percent(report.expected_shortfall_95), fmt_number(report.expected_shortfall_95_value, 2), "EXPECTED SHORTFALL 99%", _risk_percent(report.expected_shortfall_99), fmt_number(report.expected_shortfall_99 * self.model.net_asset_value if report.expected_shortfall_99 is not None else None, 2), "1 DAY / OBSERVED"),
+                ("MAX DRAWDOWN", _risk_percent(report.max_drawdown), "--", "SHARPE", fmt_number(report.sharpe, 3), "--", "OBSERVED / ZERO RISK-FREE RATE"),
+                (f"BETA / {report.benchmark}", fmt_number(report.beta, 3), "--", "FACTOR ALPHA", _risk_percent(report.alpha), "--", "DAILY OLS / ANNUALIZED ALPHA"),
+                ("FACTOR R-SQUARED", _risk_percent(report.factor_r_squared), "--", "BENCHMARK", report.benchmark, "--", "OLS FIT / OBSERVED PROXY"),
+            )
+        metrics.setRowCount(len(rows))
+        for table_row, values in enumerate(rows):
+            for column, value in enumerate(values):
+                color = AJAX_CYAN if column in {0, 3} else AJAX_AMBER if column in {1, 2, 4, 5} else AJAX_TEXT
+                metrics.setItem(table_row, column, _item(value, color=color, right=column in {1, 2, 4, 5}))
+        metrics.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        metrics.horizontalHeader().setSectionResizeMode(6, QHeaderView.ResizeMode.Stretch)
+        metrics.setMinimumHeight(235)
+        metrics.setMaximumHeight(235)
+        layout.addWidget(metrics)
+
+        layout.addWidget(_heading("RISK CONTRIBUTION / HISTORY COVERAGE"))
+        table = _table(
+            (
+                "SECURITY", "WEIGHT", "OBS", "ANN. VOL", f"BETA / {self.model.risk_benchmark}",
+                "VARIANCE CONTR.", "VOL CONTR.", f"VAR 95 {self.model.base_currency}",
+                "PROVIDER", "DATA", "STATUS",
+            )
+        )
+        contributions = report.contributions if report is not None else ()
+        table.setRowCount(max(len(contributions), 1))
+        if contributions:
+            for table_row, item in enumerate(contributions):
+                values = (
+                    item.symbol,
+                    _risk_percent(item.weight_percent / 100.0),
+                    str(item.observations),
+                    _risk_percent(item.annualized_volatility),
+                    fmt_number(item.beta, 3),
+                    _risk_percent(
+                        item.variance_contribution_percent / 100.0
+                        if item.variance_contribution_percent is not None else None
+                    ),
+                    _risk_percent(item.volatility_contribution),
+                    fmt_number(item.var_95_contribution, 2),
+                    item.provider,
+                    item.quality,
+                    item.status,
+                )
+                for column, value in enumerate(values):
+                    color = AJAX_RED if column == 10 and item.status != "OK" else AJAX_AMBER if column in {3, 5, 6, 7} else AJAX_TEXT
+                    table.setItem(table_row, column, _item(value, color=color, right=column in {1, 2, 3, 4, 5, 6, 7}))
+        else:
+            table.setItem(0, 0, _item("NO RISK CONTRIBUTION CALCULATED", color=AJAX_MUTED))
+        table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        table.horizontalHeader().setSectionResizeMode(10, QHeaderView.ResizeMode.Stretch)
+        table.cellDoubleClicked.connect(lambda row, _column: self._open_symbol_from(table, row))
+        layout.addWidget(table, 1)
+        return page, table
+
+    def _factor_page(self) -> tuple[QWidget, QTableWidget]:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(2)
+        report = self.model.risk
+        if report is not None and report.factors:
+            summary = (
+                f"OLS DAILY RETURNS  |  ALPHA {_risk_percent(report.alpha)}  |  "
+                f"R-SQUARED {_risk_percent(report.factor_r_squared)}  |  ESTIMATED EXPOSURES*"
+            )
+        else:
+            summary = "FACTOR EXPOSURES NOT CALCULATED OR INSUFFICIENT COMMON HISTORY"
+        layout.addWidget(_subheading(summary))
+        table = _table(("FACTOR", "LOADING", "PROXY", "PROVIDER", "INTERPRETATION"))
+        factors = report.factors if report is not None else ()
+        table.setRowCount(max(len(factors), 1))
+        if factors:
+            for table_row, item in enumerate(factors):
+                interpretation = "POSITIVE EXPOSURE" if item.loading > 0 else "NEGATIVE EXPOSURE" if item.loading < 0 else "NEUTRAL"
+                values = (item.name, f"{item.loading:+.4f}", item.proxy, item.provider, interpretation)
+                for column, value in enumerate(values):
+                    color = _change_color(item.loading) if column in {1, 4} else AJAX_CYAN if column == 0 else AJAX_TEXT
+                    table.setItem(table_row, column, _item(value, color=color, right=column == 1))
+        else:
+            table.setItem(0, 0, _item("NO FACTOR MODEL AVAILABLE", color=AJAX_MUTED))
+        table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.Stretch)
+        layout.addWidget(table, 1)
+        return page, table
+
+    def _correlation_page(self) -> tuple[QWidget, QTableWidget]:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(2)
+        report = self.model.risk
+        symbols = report.correlation_symbols if report is not None else ()
+        layout.addWidget(_subheading("PAIRWISE DAILY RETURN CORRELATION  |  MINIMUM 30 COMMON OBSERVATIONS"))
+        table = _table(tuple(("SECURITY", *symbols)))
+        table.setRowCount(max(len(symbols), 1))
+        if symbols and report is not None:
+            for table_row, symbol in enumerate(symbols):
+                table.setItem(table_row, 0, _item(symbol, color=AJAX_CYAN))
+                for column, value in enumerate(report.correlations[table_row], start=1):
+                    color = AJAX_AMBER if table_row == column - 1 else _correlation_color(value)
+                    table.setItem(
+                        table_row,
+                        column,
+                        _item("--" if value is None else f"{value:+.3f}", color=color, right=True),
+                    )
+        else:
+            table.setItem(0, 0, _item("NO CORRELATION MATRIX CALCULATED", color=AJAX_MUTED))
+        table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        layout.addWidget(table, 1)
+        return page, table
+
+    def _stress_page(self) -> tuple[QWidget, QTableWidget]:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(2)
+        layout.addWidget(
+            _subheading(
+                "OBSERVED = REPLAY OF SELECTED HISTORY  |  * = LINEAR ESTIMATE, NOT A MARKET QUOTE OR FORECAST"
+            )
+        )
+        table = _table(("SCENARIO", "PORTFOLIO RETURN", f"P&L {self.model.base_currency}", "BASIS", "METHODOLOGY"))
+        scenarios = self.model.risk.scenarios if self.model.risk is not None else ()
+        table.setRowCount(max(len(scenarios), 1))
+        if scenarios:
+            for table_row, item in enumerate(scenarios):
+                values = (
+                    item.name,
+                    _risk_percent(item.return_percent / 100.0),
+                    _signed(item.profit_loss, 2),
+                    item.basis,
+                    item.methodology,
+                )
+                for column, value in enumerate(values):
+                    color = _change_color(item.profit_loss) if column in {1, 2} else AJAX_AMBER if column == 3 and "*" in item.basis else AJAX_TEXT
+                    table.setItem(table_row, column, _item(value, color=color, right=column in {1, 2}))
+        else:
+            table.setItem(0, 0, _item("NO STRESS SCENARIOS CALCULATED", color=AJAX_MUTED))
+        table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.Stretch)
+        layout.addWidget(table, 1)
+        return page, table
+
     def _set_import_preview(self, preview: BrokerImportPreview) -> None:
         self._import_preview = preview
         self.import_status.setText(
@@ -607,6 +808,11 @@ class PortfolioWorkspace(QWidget):
         row = self.table.currentRow()
         item = self.table.item(row, 0) if row >= 0 else None
         return item.text() if item is not None else ""
+
+    def _open_symbol_from(self, table: QTableWidget, row: int) -> None:
+        item = table.item(row, 0)
+        if item is not None and item.text() and not item.text().startswith("NO "):
+            self.command_requested.emit(f"{item.text()} DES")
 
     @Slot(str)
     def _switch(self, name: str) -> None:
@@ -712,7 +918,16 @@ class PortfolioWorkspace(QWidget):
 
     @Slot()
     def _refresh(self) -> None:
-        self.command_requested.emit(f"PORT {self.model.name}")
+        if self.model.risk is not None:
+            self._calculate_risk()
+        else:
+            self.command_requested.emit(f"PORT {self.model.name}")
+
+    @Slot()
+    def _calculate_risk(self) -> None:
+        benchmark = self.risk_benchmark.currentText().strip().upper() or "SPY"
+        period = self.risk_period.currentText().strip().upper() or "1Y"
+        self.command_requested.emit(f"PORT {self.model.name} RISK {benchmark} {period}")
 
     @Slot(int, int)
     def _open_security(self, row: int, _column: int) -> None:
@@ -1248,3 +1463,19 @@ def _signed(value: float | None, decimals: int) -> str:
 
 def _percent(value: float | None) -> str:
     return "--" if value is None else fmt_percent(value, signed=True)
+
+
+def _risk_percent(value: float | None) -> str:
+    return "--" if value is None else fmt_percent(value * 100.0, signed=True)
+
+
+def _correlation_color(value: float | None) -> str:
+    if value is None:
+        return AJAX_MUTED
+    if value >= 0.75:
+        return AJAX_RED
+    if value <= -0.25:
+        return AJAX_GREEN
+    if value >= 0.40:
+        return AJAX_AMBER
+    return AJAX_TEXT

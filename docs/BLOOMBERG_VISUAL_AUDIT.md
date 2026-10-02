@@ -30,6 +30,22 @@ is introduced without a reviewed screen family.
 - Visual validation covered all five tabs at 1920 x 1080 with mixed USD/EUR
   positions, realized P&L, dividends, taxes and multiple data providers.
 
+## 2026-10-02 Portfolio Risk Pass
+
+- `PORT` adds four flat native views for risk contribution, factor exposure,
+  pairwise correlation and stress scenarios, bringing the workspace to nine
+  functional tabs without introducing a separate visual language.
+- The risk summary uses two metric blocks per row so VaR, expected shortfall,
+  drawdown, Sharpe, beta, alpha and model fit remain visible together at
+  1920 x 1080.
+- Coverage, observation count, period, provider and data quality remain visible.
+  Missing or mock history is rejected rather than silently estimated.
+- Scenario rows distinguish observed historical replay from `ESTIMATED*`
+  factor, currency and concentration shocks and state the method beside each
+  result.
+- Visual validation covered all four views using three live-listed positions,
+  including historical EUR/USD conversion for a European security.
+
 ## 2026-09-28 Quality Pass
 
 - `HOME` now opens the working multi-asset monitor after login instead of an
@@ -96,7 +112,7 @@ is introduced without a reviewed screen family.
 | TEN_Q | 10-Q filing | Fundamentals | Reviewed |
 | EXPORT | XLS | Fundamentals | Reviewed |
 | SCREENER | EQS | Fundamentals | Reviewed |
-| PORTFOLIO | PORT | Portfolio accounting | Reviewed; five-view native ledger |
+| PORTFOLIO | PORT | Portfolio accounting / risk | Reviewed; nine-view native ledger and risk workstation |
 | DATA_QUALITY | DQM / data diagnostics | Support | Reviewed; native four-view monitor |
 | CHART | GP | Price chart | Rebuilt with Lightweight Charts |
 | RISK | GP analytics view | Price chart | Fixed; now routes to live chart |
