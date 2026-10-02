@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+from pathlib import Path
 
 import ajax_terminal.__main__ as entrypoint
 
@@ -54,3 +55,28 @@ def test_terminal_color_setup_can_force_colors_for_screenshots(monkeypatch) -> N
     assert entrypoint.os.environ["TERM"] == "xterm-256color"
     assert entrypoint.os.environ["COLORTERM"] == "truecolor"
     assert entrypoint.os.environ["FORCE_COLOR"] == "1"
+
+
+def test_installation_wait_returns_immediately_without_marker(tmp_path: Path) -> None:
+    marker = tmp_path / ".thriveberg-installing"
+
+    assert entrypoint._wait_for_installation(marker, timeout_seconds=0)
+
+
+def test_installation_wait_times_out_cleanly_with_marker(tmp_path: Path) -> None:
+    marker = tmp_path / ".thriveberg-installing"
+    marker.write_text("UPDATING\n", encoding="ascii")
+
+    assert not entrypoint._wait_for_installation(marker, timeout_seconds=0)
+
+
+def test_installation_wait_resumes_after_marker_is_removed(tmp_path: Path, monkeypatch) -> None:
+    marker = tmp_path / ".thriveberg-installing"
+    marker.write_text("UPDATING\n", encoding="ascii")
+
+    def remove_marker(_seconds: float) -> None:
+        marker.unlink()
+
+    monkeypatch.setattr(entrypoint.time, "sleep", remove_marker)
+
+    assert entrypoint._wait_for_installation(marker, timeout_seconds=1, poll_seconds=0.01)

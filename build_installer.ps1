@@ -97,19 +97,35 @@ $env:THRIVEBERG_BUILD_INFO_FILE = $buildInfoFile
 
 Push-Location $root
 try {
-    Write-Host "[1/5] Running the complete test suite..." -ForegroundColor Cyan
+    Write-Host "[1/6] Running the complete test suite..." -ForegroundColor Cyan
     & $python -m pytest --basetemp=build\pytest-installer
     if ($LASTEXITCODE -ne 0) { throw "Tests failed" }
 
-    Write-Host "[2/5] Building the installed application directory..." -ForegroundColor Cyan
+    Write-Host "[2/6] Building the installed application directory..." -ForegroundColor Cyan
     & $python -m PyInstaller --noconfirm --clean $spec
     if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed" }
 
-    Write-Host "[3/5] Compiling the versioned installer..." -ForegroundColor Cyan
+    Write-Host "[3/6] Smoke-testing the packaged application..." -ForegroundColor Cyan
+    $packagedExe = Join-Path $root "dist\THRIVEBERG_Terminal\THRIVEBERG_Terminal.exe"
+    $packagedShiboken = Join-Path $root "dist\THRIVEBERG_Terminal\_internal\shiboken6\Shiboken.pyd"
+    $smokeScreenshot = Join-Path $root "build\smoke-packaged.png"
+    if (-not (Test-Path -LiteralPath $packagedShiboken -PathType Leaf)) {
+        throw "Packaged Shiboken runtime is missing: $packagedShiboken"
+    }
+    Remove-Item -LiteralPath $smokeScreenshot -Force -ErrorAction SilentlyContinue
+    $smoke = Start-Process -FilePath $packagedExe -ArgumentList @(
+        "--command", "DIAG", "--screenshot", ('"{0}"' -f $smokeScreenshot)
+    ) -Wait -PassThru
+    if ($smoke.ExitCode -ne 0) { throw "Packaged application smoke test failed with exit code $($smoke.ExitCode)" }
+    if (-not (Test-Path -LiteralPath $smokeScreenshot -PathType Leaf)) {
+        throw "Packaged application did not create its smoke-test screenshot"
+    }
+
+    Write-Host "[4/6] Compiling the versioned installer..." -ForegroundColor Cyan
     & $iscc "/DBetaVersion=$BetaVersion" "/DAppVersion=$AppVersion" $iss
     if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed" }
 
-    Write-Host "[4/5] Writing the release checksum..." -ForegroundColor Cyan
+    Write-Host "[5/6] Writing the release checksum..." -ForegroundColor Cyan
     $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $setup).Hash
     $checksum = "$hash  $([System.IO.Path]::GetFileName($setup))`n"
     [System.IO.File]::WriteAllText(
@@ -118,7 +134,7 @@ try {
         [System.Text.UTF8Encoding]::new($false)
     )
 
-    Write-Host "[5/5] Signing the update manifest with Ed25519..." -ForegroundColor Cyan
+    Write-Host "[6/6] Signing the update manifest with Ed25519..." -ForegroundColor Cyan
     $signArguments = @(
         "tools\release_signing.py", "sign",
         "--private", $SigningKeyPath,

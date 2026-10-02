@@ -3,10 +3,18 @@ from __future__ import annotations
 import importlib.util
 import os
 import sys
+import time
+from pathlib import Path
+
+
+_INSTALL_MARKER = ".thriveberg-installing"
 
 
 def main() -> int:
     _ensure_standard_streams()
+    if not _wait_for_installation():
+        _show_installation_busy_message()
+        return 75
     screenshot_mode = "--screenshot" in sys.argv or "--screenshot-splash" in sys.argv
     _configure_terminal_colors(force=screenshot_mode)
     _migrate_plaintext_settings()
@@ -65,6 +73,42 @@ def main() -> int:
     app = AjaxTerminalApp(startup_command=initial_command)
     app.run()
     return 0
+
+
+def _wait_for_installation(
+    marker: Path | None = None,
+    *,
+    timeout_seconds: float = 120.0,
+    poll_seconds: float = 0.25,
+) -> bool:
+    """Wait for an in-place installer to finish before importing GUI libraries."""
+    if marker is None:
+        if os.name != "nt" or not bool(getattr(sys, "frozen", False)):
+            return True
+        marker = Path(sys.executable).resolve().parent / _INSTALL_MARKER
+    deadline = time.monotonic() + max(timeout_seconds, 0.0)
+    while marker.is_file():
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return False
+        time.sleep(min(max(poll_seconds, 0.01), remaining))
+    return True
+
+
+def _show_installation_busy_message() -> None:
+    message = (
+        "THRIVEBERG Terminal is still being updated. "
+        "Wait for Setup to finish, then open the terminal again."
+    )
+    if os.name == "nt":
+        try:
+            import ctypes
+
+            ctypes.windll.user32.MessageBoxW(None, message, "THRIVEBERG Terminal", 0x30)
+            return
+        except (AttributeError, OSError):
+            pass
+    print(message, file=sys.stderr)
 
 
 def _migrate_plaintext_settings() -> None:

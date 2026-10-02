@@ -55,3 +55,20 @@ Name: "{autodesktop}\THRIVEBERG Terminal"; Filename: "{app}\{#AppExeName}"; Work
 
 [Run]
 Filename: "{app}\{#AppExeName}"; Description: "Launch THRIVEBERG Terminal"; Flags: nowait postinstall skipifsilent
+
+[Code]
+function InstallMarkerPath(): String;
+begin
+  Result := ExpandConstant('{app}\.thriveberg-installing');
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+begin
+  if CurStep = ssInstall then
+  begin
+    ForceDirectories(ExpandConstant('{app}'));
+    SaveStringToFile(InstallMarkerPath(), 'UPDATING' + #13#10, False);
+  end
+  else if CurStep = ssPostInstall then
+    DeleteFile(InstallMarkerPath());
+end;
