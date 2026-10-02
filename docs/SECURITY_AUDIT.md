@@ -1,18 +1,20 @@
-# Security audit - 2026-10-01
+# Security audit - 2026-10-02
 
-Scope: source tree prepared for the initial private GitHub publication of
-THRIVEBERG Terminal 0.5.0 Beta.
+Scope: THRIVEBERG Terminal 0.5.0 Beta 013 source tree, packaged application and
+Windows installer.
 
 ## Results
 
-- `pytest`: 225 passed.
+- `pytest`: 238 passed.
 - `pip-audit`: no known vulnerable installed dependencies.
 - Bandit: no medium- or high-severity findings after hardening.
-- `detect-secrets`: no private credentials found. Seven reviewed findings are
-  the intentionally public Supabase publishable key and synthetic test values.
-- Installer SHA-256: `30ADCBF2C32D329DD9FA80090B3B18EEBB24E5020D73ED014724C7EA15699D0C`.
-- Microsoft Defender custom scan: zero detections for the Beta 010 installer.
-- Packaged smoke test: successful 1920x1040 render with non-empty market data.
+- `detect-secrets`: no new findings in the changed source, test or documentation files.
+- Installer SHA-256: `DC9859EB57C8AA40AED0F5762CCBD1B83A6F39FA56AF9B680C6F698F648A59DD`.
+- Microsoft Defender custom scan: zero detections for the Beta 013 installer.
+- Packaged smoke tests: successful `DQM` provider dashboard and live `DQM AAPL`
+  cross-source comparison renders at 1920x1040.
+- Local `UPD` inventory: Beta 013 detected first with a verified checksum while
+  Betas 012 and 011 remain available.
 
 ## Hardening included
 
@@ -28,7 +30,7 @@ THRIVEBERG Terminal 0.5.0 Beta.
 
 ## Residual risks
 
-- Beta 010 is not code signed. SHA-256 verification detects modification but
+- Beta 013 is not code signed. SHA-256 verification detects modification but
   does not establish publisher identity.
 - Public market-data endpoints can be delayed, rate limited, changed, or
   unavailable. Quality labels must remain visible and are not a trading SLA.

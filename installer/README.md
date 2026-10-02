@@ -16,13 +16,13 @@ desktop-client identifiers, not privileged credentials; database access remains
 restricted by Supabase Auth and Row Level Security. Secret and `service_role`
 keys must never be added to the installer.
 
-Beta 012 is the current distributable build. Build the next beta with:
+Beta 013 is the current distributable build. Build the next beta with:
 
 ```powershell
 .\build_installer.ps1
 ```
 
-The script defaults to Beta 013 and application version 0.5.0. Use explicit
+The script defaults to Beta 014 and application version 0.5.0. Use explicit
 parameters for later releases.
 
 Do not commit generated installers to the source repository. Publish the setup

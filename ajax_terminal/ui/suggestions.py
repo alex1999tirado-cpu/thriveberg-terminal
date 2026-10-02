@@ -45,6 +45,7 @@ COMMANDS = (
     CommandSuggestion("WATC", "Editable real-time watchlists"),
     CommandSuggestion("PORT", "Portfolio positions, valuation and P&L"),
     CommandSuggestion("ALRT", "Market price and volume alerts"),
+    CommandSuggestion("DQM", "Provider health, cache coverage and source comparison"),
     CommandSuggestion("EQS", "Multi-factor equity screener"),
     CommandSuggestion("EVT ALL 30", "Corporate calendar for watchlists and portfolios"),
     CommandSuggestion("WSP", "Save and restore terminal workspaces"),

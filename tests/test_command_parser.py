@@ -142,3 +142,5 @@ def test_workstation_commands_are_first_class_actions() -> None:
     assert parse_command("upd").action == CommandAction.UPDATES
     assert parse_command("port").action == CommandAction.PORTFOLIO
     assert parse_command("alrt").action == CommandAction.ALERTS
+    assert parse_command("dqm aapl probe").action == CommandAction.DATA_QUALITY
+    assert parse_command("dqc").action == CommandAction.DATA_QUALITY

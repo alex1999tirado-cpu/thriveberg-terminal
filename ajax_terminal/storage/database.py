@@ -107,4 +107,22 @@ def _ensure_schema(connection: sqlite3.Connection) -> None:
         )
         """
     )
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS provider_health (
+            provider TEXT NOT NULL,
+            domain TEXT NOT NULL,
+            status TEXT NOT NULL,
+            quality TEXT NOT NULL DEFAULT 'UNAVAILABLE',
+            latency_ms REAL,
+            success_count INTEGER NOT NULL DEFAULT 0,
+            failure_count INTEGER NOT NULL DEFAULT 0,
+            last_checked_at TEXT NOT NULL,
+            last_success_at TEXT,
+            last_failure_at TEXT,
+            message TEXT NOT NULL DEFAULT '',
+            PRIMARY KEY (provider, domain)
+        )
+        """
+    )
     connection.commit()

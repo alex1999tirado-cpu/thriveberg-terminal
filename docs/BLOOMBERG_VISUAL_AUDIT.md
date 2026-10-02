@@ -4,6 +4,17 @@ This inventory keeps every THRIVEBERG command attached to an explicit Bloomberg-
 visual family. `tests/test_visual_command_inventory.py` fails when a new command
 is introduced without a reviewed screen family.
 
+## 2026-10-02 Data Quality Pass
+
+- `DQM` adds a native four-view data-quality workstation for provider health,
+  cache inventory, domain coverage and cross-source quote comparison.
+- Provider probes run in parallel and retain latency plus success/failure history;
+  disabled credentials remain distinct from provider failures.
+- Cross-source values are marked `ALIGNED`, `DIVERGENT` or `SINGLE SOURCE`, and
+  double-clicking a comparison drills into the existing `FLDS` provenance view.
+- The screen follows the shared terminal grammar: flat numbered tabs, real table
+  columns, amber actions and values, cyan section labels, and explicit status colors.
+
 ## 2026-09-28 Quality Pass
 
 - `HOME` now opens the working multi-asset monitor after login instead of an
@@ -70,6 +81,7 @@ is introduced without a reviewed screen family.
 | TEN_Q | 10-Q filing | Fundamentals | Reviewed |
 | EXPORT | XLS | Fundamentals | Reviewed |
 | SCREENER | EQS | Fundamentals | Reviewed |
+| DATA_QUALITY | DQM / data diagnostics | Support | Reviewed; native four-view monitor |
 | CHART | GP | Price chart | Rebuilt with Lightweight Charts |
 | RISK | GP analytics view | Price chart | Fixed; now routes to live chart |
 | OPTIONS | OMON | Derivatives | Reviewed |

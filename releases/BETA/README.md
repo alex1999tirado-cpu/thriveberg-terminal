@@ -1,17 +1,18 @@
 # THRIVEBERG Terminal Beta Releases
 
-This directory contains only the current distributable beta.
+This directory contains local distributable beta artifacts. Generated binaries
+and checksums are excluded from Git history and published as release assets.
 
-## BETA 012
+## BETA 013
 
-- File: `THRIVEBERG-Terminal-BETA-012-Setup.exe`
-- Released: 2026-10-01
+- File: `THRIVEBERG-Terminal-BETA-013-Setup.exe`
+- Released: 2026-10-02
 - Status: Current beta / distributable Windows installer
 - Version: 0.5.0 Beta
-- Highlight: one click selects a headline and updates its preview; double-click, Enter, or OPEN STORY opens the source
-- Validation: 232 automated tests, dependency audit, secret scan, static security analysis, packaged `NEWS CTVA` smoke test, checksum verification, and Microsoft Defender scan
-- SHA-256: `B9B88770F2483D8DA50757D28D9210E420E76DA8018C648485A97E40991F61AD`
+- Highlight: native `DQM` data-quality monitor with provider health, persistent probe history, cache inventory, coverage matrix and cross-source quote comparison
+- Validation: 238 automated tests, dependency audit, changed-file secret scan, static security analysis, packaged `DQM` and `DQM AAPL` smoke tests, checksum verification, and Microsoft Defender scan
+- SHA-256: `DC9859EB57C8AA40AED0F5762CCBD1B83A6F39FA56AF9B680C6F698F648A59DD`
 - Security: no private provider credentials are bundled; user-supplied keys are stored with Windows DPAPI.
 
-The next development build is `BETA 013`. Generated installers and checksums
+The next development build is `BETA 014`. Generated installers and checksums
 should be published as GitHub Release assets rather than committed to source.

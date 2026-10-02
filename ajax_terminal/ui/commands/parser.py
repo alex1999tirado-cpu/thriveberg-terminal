@@ -48,6 +48,7 @@ class CommandAction(StrEnum):
     RISK = "RISK"
     WATCH = "WATCH"
     DATA_AUDIT = "DATA_AUDIT"
+    DATA_QUALITY = "DATA_QUALITY"
     WORKSPACES = "WORKSPACES"
     UPDATES = "UPDATES"
     PORTFOLIO = "PORTFOLIO"
@@ -186,6 +187,10 @@ ALIASES = {
     "FIELD": CommandAction.DATA_AUDIT,
     "FIELDS": CommandAction.DATA_AUDIT,
     "PROVENANCE": CommandAction.DATA_AUDIT,
+    "DQM": CommandAction.DATA_QUALITY,
+    "DQC": CommandAction.DATA_QUALITY,
+    "DATAQ": CommandAction.DATA_QUALITY,
+    "DATAQUALITY": CommandAction.DATA_QUALITY,
     "WSP": CommandAction.WORKSPACES,
     "WORKSPACE": CommandAction.WORKSPACES,
     "WORKSPACES": CommandAction.WORKSPACES,

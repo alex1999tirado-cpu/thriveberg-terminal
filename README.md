@@ -50,6 +50,18 @@ OVDV turns real listed-option observations into an interactive implied-volatilit
 
 ![Interactive global macro map with Spain selected](screenshots/global-macro-map.png)
 
+### Data integrity and provider health
+
+![THRIVEBERG provider health and cache diagnostics](screenshots/data-quality-monitor.png)
+
+![THRIVEBERG cross-source quote comparison](screenshots/data-quality-comparison.png)
+
+`DQM` audits the configured provider stack without storing credentials or raw
+provider responses. It persists the latest availability and latency plus cumulative success/failure history, inventories
+fresh and stale cache entries, documents domain coverage, and compares an
+instrument across every applicable quote source. Double-clicking a comparison
+opens the existing `FLDS` field-level provenance view.
+
 THRIVEBERG is a research and market-monitoring workstation. It does not route
 orders, hold client money, or provide investment advice. Every data view carries
 its provider and quality state; unavailable observations remain unavailable.
@@ -75,8 +87,8 @@ its provider and quality state; unavailable observations remain unavailable.
 - Equity research functions for financial analysis, estimates, recommendations, relative valuation, dividends, corporate events, and screening.
 - Native PySide6 chart workstations: TradingView Lightweight Charts for `GP`, Apache ECharts for analytical 2D views, and PyVista/VTK for the interactive `OVDV` volatility surface.
 - Persistent SQLite cache and watchlist storage.
-- Native workstation tools: editable named watchlists (`WATC`), portfolio valuation and P&L (`PORT`), market alerts (`ALRT`), saved multi-factor screens (`EQS`), and a paged corporate calendar (`EVT ALL`) with watchlist, portfolio, market-cap, industry and geographic filters. Field-level source audit (`FLDS`), persistent workspaces (`WSP`), crash recovery, and a checksum-verified local beta manager (`UPD`) are also included.
-- Decoupled provider interfaces with fallback to cached or clearly marked mock data.
+- Native workstation tools: editable named watchlists (`WATC`), portfolio valuation and P&L (`PORT`), market alerts (`ALRT`), saved multi-factor screens (`EQS`), and a paged corporate calendar (`EVT ALL`) with watchlist, portfolio, market-cap, industry and geographic filters. Global provider and cache diagnostics (`DQM`), field-level source audit (`FLDS`), persistent workspaces (`WSP`), crash recovery, and a checksum-verified local beta manager (`UPD`) are also included.
+- Decoupled provider interfaces with cached fallback and explicit unavailable or estimated labels; fictitious market observations are not presented as real data.
 - Analytics for FX forwards, fixed income, Black-Scholes options, volatility, and risk.
 - Supabase-backed user accounts, friend requests, private messages, clickable THRIVEBERG command links, and self-contained friend ZIP export.
 - Pytest coverage for command parsing, forwards, bonds, options, and provider normalization.
@@ -124,7 +136,7 @@ ajax
 The current beta is distributed as a per-user Windows installer:
 
 ```text
-releases\BETA\THRIVEBERG-Terminal-BETA-012-Setup.exe
+releases\BETA\THRIVEBERG-Terminal-BETA-013-Setup.exe
 ```
 
 It installs THRIVEBERG Terminal under `%LOCALAPPDATA%\Programs`, creates the
@@ -138,13 +150,13 @@ Build the next installer after changing the source with:
 .\build_installer.ps1
 ```
 
-The default build number is `013`, so the preserved Beta 012 installer is never
+The default build number is `014`, so the preserved Beta 013 installer is never
 overwritten accidentally. Pass `-BetaVersion` explicitly for later releases.
 
 The build uses PyInstaller's one-directory layout internally and Inno Setup for
 installation and upgrades. See [`installer/README.md`](installer/README.md).
 Release executables and checksums are intentionally excluded from Git history;
-publish them as GitHub Release assets instead. Beta 012 is not currently code
+publish them as GitHub Release assets instead. Beta 013 is not currently code
 signed, so recipients should verify the accompanying SHA-256 checksum before
 running it and may still see a Microsoft SmartScreen warning.
 
@@ -156,11 +168,11 @@ running it and may still see a Microsoft SmartScreen warning.
   also enforce hostname allowlists.
 - Supabase access is constrained by Auth and row-level security. The bundled
   key is publishable and has no administrative privileges.
-- CI runs 225 tests, `pip-audit`, `detect-secrets`, and Bandit for every change.
+- CI runs 238 tests, `pip-audit`, `detect-secrets`, and Bandit for every change.
 
 See [SECURITY.md](SECURITY.md) for vulnerability reporting and
 [the latest audit](docs/SECURITY_AUDIT.md) for verified results and residual
-risks. Beta 010 is not code signed, so its SHA-256 protects integrity but does
+risks. Beta 013 is not code signed, so its SHA-256 protects integrity but does
 not establish publisher identity.
 
 ## API Configuration
@@ -290,6 +302,9 @@ PORT ADD AAPL 10 185 USD
 ALRT
 ALRT ADD AAPL PRICE > 250
 AAPL FLDS REVENUE
+DQM
+DQM PROBE
+DQM AAPL
 WSP
 UPD
 ```
@@ -449,12 +464,19 @@ Registered market instruments are defined only in `ajax_terminal/instruments/reg
 
 ## Roadmap
 
-- Add richer FRED, ECB, Treasury, and Eurostat integrations.
-- Add American/binomial valuation and multi-leg option strategy analytics.
-- Add multi-watchlist editing screens.
-- Add portfolio risk with persisted positions.
-- Add alerts and keyboard-selectable search results.
-- Add signed installers and packaging for macOS.
+Development advances one validated beta milestone at a time:
+
+1. Data quality, provider health, cache coverage, source comparison and field provenance. Completed in the Beta 013 development cycle.
+2. Professional portfolio accounting, performance attribution and broker CSV imports.
+3. Portfolio risk, factor exposure, correlation and stress scenarios.
+4. Corporate actions and automatic position/history adjustments.
+5. Background alerts for prices, fundamentals, filings, news, events and portfolio risk.
+6. Signed incremental updates, diagnostics and encrypted configuration migration.
+7. Estimate revisions, earnings surprises, guidance and filing comparison.
+8. Multi-leg options, American/binomial valuation and aggregate Greeks.
+9. Fixed-income cash flows, spread analytics and bootstrapped curves.
+10. Ranked screening, synchronized chart workspaces, research notes and backtesting.
+11. Paper trading, macOS packaging and optional broker connectivity after the security boundary is reviewed.
 
 ## Financial Data Disclaimer
 

@@ -53,6 +53,7 @@ from ajax_terminal.charts.ovdv_window import VolatilitySurfaceWorkspace
 from ajax_terminal.charts.theme import AJAX_AMBER, AJAX_MUTED, AJAX_RED, AJAX_TEXT, qt_stylesheet
 from ajax_terminal.classic_embed import ClassicAction, ClassicSnapshot, render_classic_snapshot
 from ajax_terminal.desktop_security import open_external_url, open_local_path
+from ajax_terminal.data_quality_desktop import DataQualityWorkspace
 from ajax_terminal.fundamentals_desktop import (
     FinancialAnalysisWorkspace,
     FinancialExportWorkspace,
@@ -90,6 +91,7 @@ from ajax_terminal.options_desktop import (
     load_option_valuation,
 )
 from ajax_terminal.services.market_service import MarketService
+from ajax_terminal.services.data_quality_service import load_data_quality_dashboard
 from ajax_terminal.services.news_service import NewsService
 from ajax_terminal.services.options_service import resolve_option_underlying_symbol
 from ajax_terminal.services.social_service import SocialService
@@ -221,6 +223,9 @@ def resolve_desktop_command(raw: str, current_symbol: str = "") -> DesktopRoute:
         return DesktopRoute("description", parsed.target or current_symbol, raw=clean)
     if parsed.action == CommandAction.DATA_AUDIT:
         return DesktopRoute("data-audit", parsed.target or current_symbol, raw=clean)
+    if parsed.action == CommandAction.DATA_QUALITY:
+        target = next((arg for arg in parsed.args if arg not in {"PROBE", "REFRESH"}), "")
+        return DesktopRoute("data-quality", target, raw=clean)
     if parsed.action == CommandAction.FINANCIAL_ANALYSIS:
         return DesktopRoute("financial-analysis", parsed.target or current_symbol, raw=clean)
     research_actions = {
@@ -1466,6 +1471,7 @@ class AjaxDesktopWindow(QMainWindow):
         tools_button = _button("TOOLS", lambda: None)
         tools_menu = QMenu(tools_button)
         tools_menu.addAction("CURVE  YIELD CURVES", lambda: self.execute_text("CURVE USD"))
+        tools_menu.addAction("DQM  DATA QUALITY", lambda: self.execute_text("DQM"))
         tools_menu.addAction("WSP  WORKSPACES", lambda: self.execute_text("WSP"))
         tools_menu.addAction("UPD  BETA RELEASES", lambda: self.execute_text("UPD"))
         tools_menu.addSeparator()
@@ -1772,6 +1778,12 @@ class AjaxDesktopWindow(QMainWindow):
                 lambda: load_data_audit(route.target, field_filter),
                 self._mount_data_audit,
             )
+        elif route.kind == "data-quality":
+            self._load_workspace(
+                "NATIVE DATA QUALITY MONITOR",
+                lambda: load_data_quality_dashboard(parsed.args),
+                self._mount_data_quality,
+            )
         elif route.kind == "financial-analysis":
             self._load_workspace(
                 "NATIVE FINANCIAL ANALYSIS",
@@ -2064,6 +2076,19 @@ class AjaxDesktopWindow(QMainWindow):
         self.instrument_bar.setText(
             f"{model.symbol}   |   {len(model.entries)} AUDITED FIELDS   |   "
             "SOURCE + QUALITY + TIMESTAMP + BASIS"
+        )
+        self.popout_button.setEnabled(False)
+        QTimer.singleShot(0, self.workspace_ready.emit)
+
+    def _mount_data_quality(self, model: object) -> None:
+        workspace = DataQualityWorkspace(model)
+        workspace.command_requested.connect(self.execute_text)
+        self._replace_workspace(workspace)
+        self.engine_label.setText("NATIVE QT / PROVIDER + CACHE DIAGNOSTICS")
+        self.instrument_bar.setText(
+            f"DQM   |   {len(model.providers)} PROVIDERS   |   "
+            f"{model.available_count} AVAILABLE   |   {model.failed_count} FAILED   |   "
+            f"CACHE {model.fresh_cache_count} FRESH / {model.stale_cache_count} STALE"
         )
         self.popout_button.setEnabled(False)
         QTimer.singleShot(0, self.workspace_ready.emit)
@@ -2557,6 +2582,7 @@ class AjaxDesktopWindow(QMainWindow):
             "option-valuation": f"OVME  |  {route.target}  |  OPTION VALUATION",
             "description": f"DES  |  {route.target}  |  SECURITY DESCRIPTION",
             "data-audit": f"FLDS  |  {route.target}  |  FIELD PROVENANCE",
+            "data-quality": f"DQM  |  DATA QUALITY MONITOR{f'  |  {route.target}' if route.target else ''}",
             "financial-analysis": f"FA  |  {route.target}  |  FINANCIAL ANALYSIS",
             "financial-income": f"IS  |  {route.target}  |  INCOME STATEMENT",
             "financial-balance": f"BS  |  {route.target}  |  BALANCE SHEET",

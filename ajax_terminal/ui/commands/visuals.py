@@ -56,6 +56,7 @@ COMMAND_VISUAL_FAMILY: dict[CommandAction, VisualFamily] = {
     CommandAction.EXPORT: VisualFamily.FUNDAMENTALS,
     CommandAction.SCREENER: VisualFamily.FUNDAMENTALS,
     CommandAction.DATA_AUDIT: VisualFamily.FUNDAMENTALS,
+    CommandAction.DATA_QUALITY: VisualFamily.SUPPORT,
     CommandAction.CHART: VisualFamily.PRICE_CHART,
     CommandAction.RISK: VisualFamily.PRICE_CHART,
     CommandAction.OPTIONS: VisualFamily.DERIVATIVES,

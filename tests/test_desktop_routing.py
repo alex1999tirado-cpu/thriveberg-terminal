@@ -129,12 +129,16 @@ def test_workstation_commands_route_to_native_workspaces() -> None:
         "ALRT": "alerts",
         "WSP": "workspaces",
         "UPD": "updates",
+        "DQM": "data-quality",
+        "DQM AAPL PROBE": "data-quality",
         "AAPL FLDS PRICE": "data-audit",
         "EVT ALL 90": "event-calendar",
     }
 
     for command, kind in expected.items():
         assert resolve_desktop_command(command).kind == kind
+
+    assert resolve_desktop_command("DQM AAPL PROBE").target == "AAPL"
 
     assert resolve_desktop_command("EVT").kind == "event-calendar"
     assert resolve_desktop_command("EVT", "AAPL").kind == "events"
