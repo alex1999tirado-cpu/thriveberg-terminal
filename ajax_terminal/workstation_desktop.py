@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sys
 import urllib.parse
+from datetime import date
 from math import ceil
 from pathlib import Path
 
@@ -10,6 +11,7 @@ from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
+    QFileDialog,
     QFrame,
     QHBoxLayout,
     QHeaderView,
@@ -18,6 +20,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
+    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -41,6 +44,11 @@ from ajax_terminal.services.workstation_service import (
     EventCalendarLoad,
     PortfolioLoad,
     WatchlistLoad,
+)
+from ajax_terminal.services.portfolio_import_service import (
+    BrokerImportPreview,
+    apply_broker_import,
+    preview_broker_csv,
 )
 from ajax_terminal.storage.cache import WatchlistStore
 from ajax_terminal.storage.workstation import (
@@ -76,6 +84,8 @@ class DataAuditWorkspace(QWidget):
                 "OBSERVED, FILED, DERIVED AND ESTIMATED VALUES ARE LABELLED EXPLICITLY"
             )
         )
+        self.action_status = _label("LEDGER READY", AJAX_MUTED)
+        root.addWidget(self.action_status)
         self.table = _table(("FIELD", "VALUE", "UNIT", "SOURCE", "QUALITY", "AS OF", "BASIS", "DOCUMENT"))
         self.table.setRowCount(max(len(model.entries), 1))
         if model.entries:
@@ -237,10 +247,11 @@ class PortfolioWorkspace(QWidget):
         super().__init__()
         self.model = model
         self.store = store or PortfolioStore()
+        self._import_preview: BrokerImportPreview | None = None
         root = _root(self)
         controls = _strip()
         row = controls.layout()
-        row.addWidget(_label("PORT", AJAX_CYAN, bold=True))
+        row.addWidget(_label("PORT  PORTFOLIO ACCOUNTING", AJAX_CYAN, bold=True))
         self.selector = QComboBox()
         self.selector.setObjectName("amberField")
         self.selector.addItems(model.names)
@@ -251,58 +262,346 @@ class PortfolioWorkspace(QWidget):
         self.new_name.setPlaceholderText("NEW PORTFOLIO")
         self.new_name.setMaximumWidth(170)
         row.addWidget(self.new_name)
+        self.new_base = QComboBox()
+        self.new_base.setObjectName("amberField")
+        self.new_base.addItems(("USD", "EUR", "GBP", "CHF", "JPY", "CAD", "AUD"))
+        self.new_base.setCurrentText(model.base_currency)
+        row.addWidget(self.new_base)
         row.addWidget(_button("NEW", self._create))
-        row.addSpacing(10)
-        self.symbol = _input("SYMBOL", 110)
-        self.quantity = _input("QUANTITY", 105)
-        self.cost = _input("AVG COST", 105)
-        self.currency = _input(model.base_currency, 70)
-        for widget in (self.symbol, self.quantity, self.cost, self.currency):
-            row.addWidget(widget)
-        row.addWidget(_button("ADD / UPDATE", self._upsert, amber=True))
+        row.addWidget(_button("IMPORT CSV", self._choose_import, amber=True))
         row.addWidget(_button("REMOVE", self._remove))
         row.addWidget(_button("REFRESH", self._refresh))
+        row.addStretch(1)
+        row.addWidget(_label(f"BASE {model.base_currency}", AJAX_AMBER, bold=True))
         root.addWidget(controls)
         pnl_color = _change_color(model.profit_loss)
         title = QLabel(
-            f"PORT  {model.name}  |  MARKET VALUE  {model.market_value:,.2f} {model.base_currency}  |  "
-            f"BOOK  {model.book_value:,.2f}  |  <span style='color:{pnl_color}'>P&L {model.profit_loss:+,.2f}</span>"
+            f"PORT  {model.name}  |  NAV  {model.net_asset_value:,.2f} {model.base_currency}  |  "
+            f"SECURITIES  {model.market_value:,.2f}  |  CASH  {model.cash_balance:+,.2f}  |  "
+            f"<span style='color:{pnl_color}'>TOTAL P&L {model.profit_loss:+,.2f}  "
+            f"({_percent(model.total_return_percent)})</span>"
         )
         title.setTextFormat(Qt.TextFormat.RichText)
         title.setObjectName("sectionTitle")
         root.addWidget(title)
-        self.table = _table(("SECURITY", "NAME", "QTY", "AVG COST", "LAST", "MARKET VALUE", "BOOK VALUE", "P&L", "P&L %", "WEIGHT", "CCY", "SOURCE", "DATA"))
-        self.table.setRowCount(max(len(model.lines), 1))
-        if model.lines:
-            for table_row, line in enumerate(model.lines):
+        root.addWidget(
+            _subheading(
+                f"REALIZED {_signed(model.realized_pnl, 2)}  |  "
+                f"UNREALIZED {_signed(model.unrealized_pnl, 2)}  |  "
+                f"INCOME {_signed(model.income, 2)}  |  FEES {model.fees:,.2f}  |  "
+                f"CASH EXP. {_signed(model.cash_expenses, 2)}  |  "
+                f"NET FLOWS {_signed(model.net_external_flow, 2)}  |  "
+                f"INVESTED CAPITAL {model.invested_capital:,.2f} {model.base_currency}"
+            )
+        )
+        self.tabs = QTabWidget()
+        self.tabs.setDocumentMode(True)
+        self.table = self._holdings_table()
+        self.attribution_table = self._attribution_table()
+        transaction_page, self.transaction_table = self._transaction_page()
+        cash_page, self.cash_table = self._cash_page()
+        import_page, self.import_table = self._import_page()
+        self.tabs.addTab(self.table, "1) HOLDINGS")
+        self.tabs.addTab(self.attribution_table, "2) ATTRIBUTION")
+        self.tabs.addTab(transaction_page, "3) TRANSACTIONS")
+        self.tabs.addTab(cash_page, "4) CASH LEDGER")
+        self.tabs.addTab(import_page, "5) IMPORT PREVIEW")
+        root.addWidget(self.tabs, 1)
+        self.refresh_timer = QTimer(self)
+        self.refresh_timer.setInterval(30_000)
+        self.refresh_timer.timeout.connect(self._refresh)
+        self.refresh_timer.start()
+
+    def _holdings_table(self) -> QTableWidget:
+        table = _table(
+            (
+                "SECURITY",
+                "NAME",
+                "QTY",
+                "AVG COST",
+                "LAST",
+                "NATIVE VALUE",
+                f"MARKET VALUE {self.model.base_currency}",
+                f"BOOK {self.model.base_currency}",
+                "P&L",
+                "P&L %",
+                "WEIGHT",
+                "FX TO BASE",
+                "CCY",
+                "SOURCE",
+                "DATA",
+            )
+        )
+        table.setRowCount(max(len(self.model.lines), 1))
+        if self.model.lines:
+            for table_row, line in enumerate(self.model.lines):
                 values = (
                     line.position.symbol,
                     line.quote.name,
                     fmt_number(line.position.quantity, 4),
                     fmt_number(line.position.cost_basis, 4),
                     fmt_number(line.quote.price, 4),
+                    fmt_number(line.native_market_value, 2),
                     fmt_number(line.market_value, 2),
                     fmt_number(line.book_value, 2),
                     _signed(line.profit_loss, 2),
                     _percent(line.profit_loss_percent),
                     _percent(line.weight_percent),
-                    line.position.currency or line.quote.currency or model.base_currency,
+                    fmt_number(line.fx_rate, 6),
+                    line.position.currency or line.quote.currency or self.model.base_currency,
                     line.quote.provider,
                     str(line.quote.quality),
                 )
                 for column, value in enumerate(values):
-                    color = _change_color(line.profit_loss) if column in {7, 8} else AJAX_AMBER if column in {4, 5} else AJAX_TEXT
-                    self.table.setItem(table_row, column, _item(value, color=color, right=column in {2, 3, 4, 5, 6, 7, 8, 9}))
+                    color = (
+                        _change_color(line.profit_loss)
+                        if column in {8, 9}
+                        else AJAX_AMBER
+                        if column in {4, 5, 6}
+                        else AJAX_TEXT
+                    )
+                    table.setItem(
+                        table_row,
+                        column,
+                        _item(value, color=color, right=column in {2, 3, 4, 5, 6, 7, 8, 9, 10, 11}),
+                    )
         else:
-            self.table.setItem(0, 0, _item("PORTFOLIO IS EMPTY", color=AJAX_MUTED))
-        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
-        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        self.table.cellDoubleClicked.connect(self._open_security)
-        root.addWidget(self.table, 1)
-        self.refresh_timer = QTimer(self)
-        self.refresh_timer.setInterval(30_000)
-        self.refresh_timer.timeout.connect(self._refresh)
-        self.refresh_timer.start()
+            table.setItem(0, 0, _item("PORTFOLIO IS EMPTY", color=AJAX_MUTED))
+        table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        table.cellDoubleClicked.connect(self._open_security)
+        return table
+
+    def _attribution_table(self) -> QTableWidget:
+        table = _table(
+            (
+                "SECURITY",
+                "MARKET VALUE",
+                "WEIGHT",
+                "UNREALIZED",
+                "REALIZED",
+                "INCOME",
+                "CASH EXPENSES",
+                "FEES PAID",
+                "TOTAL P&L",
+                "CONTRIBUTION BP",
+            )
+        )
+        table.setRowCount(max(len(self.model.attribution), 1))
+        if self.model.attribution:
+            for row, item in enumerate(self.model.attribution):
+                values = (
+                    item.symbol,
+                    fmt_number(item.market_value, 2),
+                    _percent(item.weight_percent),
+                    _signed(item.unrealized_pnl, 2),
+                    _signed(item.realized_pnl, 2),
+                    _signed(item.income, 2),
+                    _signed(item.cash_expenses, 2),
+                    fmt_number(item.fees, 2),
+                    _signed(item.total_pnl, 2),
+                    f"{item.contribution_bp:+,.1f}" if item.contribution_bp is not None else "--",
+                )
+                for column, value in enumerate(values):
+                    color = _change_color(item.total_pnl) if column in {3, 4, 5, 6, 8, 9} else AJAX_TEXT
+                    table.setItem(row, column, _item(value, color=color, right=column > 0))
+        else:
+            table.setItem(0, 0, _item("NO PERFORMANCE ATTRIBUTION YET", color=AJAX_MUTED))
+        table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        return table
+
+    def _transaction_page(self) -> tuple[QWidget, QTableWidget]:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(2)
+        controls = _strip()
+        row = controls.layout()
+        self.trade_side = QComboBox()
+        self.trade_side.addItems(("BUY", "SELL"))
+        self.trade_date = _input("YYYY-MM-DD", 105)
+        self.trade_date.setText(date.today().isoformat())
+        self.symbol = _input("SYMBOL", 105)
+        self.quantity = _input("QUANTITY", 95)
+        self.cost = _input("PRICE", 95)
+        self.trade_fees = _input("FEES", 75)
+        self.trade_fees.setText("0")
+        self.currency = _input(self.model.base_currency, 65)
+        self.currency.setText(self.model.base_currency)
+        self.trade_fx = _input("FX", 75)
+        self.trade_fx.setText("1")
+        for widget in (
+            self.trade_side,
+            self.trade_date,
+            self.symbol,
+            self.quantity,
+            self.cost,
+            self.trade_fees,
+            self.currency,
+            self.trade_fx,
+        ):
+            row.addWidget(widget)
+        row.addWidget(_button("BOOK TRADE", self._book_trade, amber=True))
+        row.addStretch(1)
+        layout.addWidget(controls)
+        table = _table(
+            (
+                "DATE",
+                "SIDE",
+                "SECURITY",
+                "QTY",
+                "PRICE",
+                "FEES",
+                "CCY",
+                "FX",
+                f"REALIZED {self.model.base_currency}",
+                "SOURCE",
+                "REFERENCE",
+            )
+        )
+        table.setRowCount(max(len(self.model.transactions), 1))
+        if self.model.transactions:
+            for table_row, transaction in enumerate(self.model.transactions):
+                values = (
+                    transaction.trade_date,
+                    transaction.side,
+                    transaction.symbol,
+                    fmt_number(transaction.quantity, 4),
+                    fmt_number(transaction.price, 4),
+                    fmt_number(transaction.fees, 2),
+                    transaction.currency,
+                    fmt_number(transaction.fx_rate, 6),
+                    _signed(transaction.realized_pnl, 2),
+                    transaction.source,
+                    transaction.external_id,
+                )
+                for column, value in enumerate(values):
+                    color = (
+                        AJAX_GREEN
+                        if column == 1 and transaction.side == "BUY"
+                        else AJAX_RED
+                        if column == 1
+                        else _change_color(transaction.realized_pnl)
+                        if column == 8
+                        else AJAX_TEXT
+                    )
+                    table.setItem(table_row, column, _item(value, color=color, right=column in {3, 4, 5, 7, 8}))
+        else:
+            table.setItem(0, 0, _item("NO BOOKED TRANSACTIONS", color=AJAX_MUTED))
+        table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        table.horizontalHeader().setSectionResizeMode(10, QHeaderView.ResizeMode.Stretch)
+        layout.addWidget(table, 1)
+        return page, table
+
+    def _cash_page(self) -> tuple[QWidget, QTableWidget]:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(2)
+        controls = _strip()
+        row = controls.layout()
+        self.cash_kind = QComboBox()
+        self.cash_kind.addItems(("DEPOSIT", "WITHDRAWAL", "DIVIDEND", "INTEREST", "TAX", "FEE"))
+        self.cash_date = _input("YYYY-MM-DD", 105)
+        self.cash_date.setText(date.today().isoformat())
+        self.cash_amount = _input("AMOUNT", 110)
+        self.cash_currency = _input(self.model.base_currency, 65)
+        self.cash_currency.setText(self.model.base_currency)
+        self.cash_fx = _input("FX", 75)
+        self.cash_fx.setText("1")
+        self.cash_symbol = _input("SYMBOL (OPTIONAL)", 145)
+        for widget in (
+            self.cash_kind,
+            self.cash_date,
+            self.cash_amount,
+            self.cash_currency,
+            self.cash_fx,
+            self.cash_symbol,
+        ):
+            row.addWidget(widget)
+        row.addWidget(_button("BOOK CASH FLOW", self._book_cash, amber=True))
+        row.addStretch(1)
+        layout.addWidget(controls)
+        table = _table(("DATE", "TYPE", "AMOUNT", "CCY", "FX", "BASE AMOUNT", "SECURITY", "SOURCE", "REFERENCE"))
+        table.setRowCount(max(len(self.model.cash_flows), 1))
+        if self.model.cash_flows:
+            for table_row, cash_flow in enumerate(self.model.cash_flows):
+                values = (
+                    cash_flow.flow_date,
+                    cash_flow.kind,
+                    _signed(cash_flow.amount, 2),
+                    cash_flow.currency,
+                    fmt_number(cash_flow.fx_rate, 6),
+                    _signed(cash_flow.amount * cash_flow.fx_rate, 2),
+                    cash_flow.symbol or "--",
+                    cash_flow.source,
+                    cash_flow.external_id,
+                )
+                for column, value in enumerate(values):
+                    color = _change_color(cash_flow.amount) if column in {1, 2, 5} else AJAX_TEXT
+                    table.setItem(table_row, column, _item(value, color=color, right=column in {2, 4, 5}))
+        else:
+            table.setItem(0, 0, _item("NO CASH FLOWS", color=AJAX_MUTED))
+        table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        table.horizontalHeader().setSectionResizeMode(8, QHeaderView.ResizeMode.Stretch)
+        layout.addWidget(table, 1)
+        return page, table
+
+    def _import_page(self) -> tuple[QWidget, QTableWidget]:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(2)
+        controls = _strip()
+        row = controls.layout()
+        self.import_status = _label("SELECT IMPORT CSV TO PREVIEW", AJAX_MUTED)
+        row.addWidget(self.import_status, 1)
+        self.apply_import_button = _button("APPLY IMPORT", self._apply_import, amber=True)
+        self.apply_import_button.setEnabled(False)
+        row.addWidget(self.apply_import_button)
+        layout.addWidget(controls)
+        table = _table(("ROW", "STATUS", "DATE", "TYPE", "ACTION", "SECURITY", "QTY", "PRICE / AMOUNT", "FEES", "CCY", "FX", "MESSAGE"))
+        table.setRowCount(1)
+        table.setItem(0, 0, _item("NO FILE SELECTED", color=AJAX_MUTED))
+        table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        table.horizontalHeader().setSectionResizeMode(11, QHeaderView.ResizeMode.Stretch)
+        layout.addWidget(table, 1)
+        return page, table
+
+    def _set_import_preview(self, preview: BrokerImportPreview) -> None:
+        self._import_preview = preview
+        self.import_status.setText(
+            f"{preview.broker}  |  {preview.path.name}  |  "
+            f"READY {preview.ready_count}  |  ERRORS {preview.error_count}"
+        )
+        self.import_status.setStyleSheet(f"color:{AJAX_CYAN};font-weight:bold;padding:0 5px")
+        self.apply_import_button.setEnabled(preview.ready_count > 0)
+        self.import_table.clearContents()
+        self.import_table.setRowCount(max(len(preview.rows), 1))
+        for table_row, item in enumerate(preview.rows):
+            price_or_amount = item.price if item.entry_type == "TRADE" else item.amount
+            values = (
+                item.row_number,
+                item.status,
+                item.entry_date,
+                item.entry_type,
+                item.action,
+                item.symbol or "--",
+                fmt_number(item.quantity, 4),
+                fmt_number(price_or_amount, 4),
+                fmt_number(item.fees, 2),
+                item.currency,
+                fmt_number(item.fx_rate, 6),
+                item.message or "--",
+            )
+            for column, value in enumerate(values):
+                color = AJAX_GREEN if column == 1 and item.valid else AJAX_RED if column == 1 else AJAX_TEXT
+                self.import_table.setItem(
+                    table_row,
+                    column,
+                    _item(value, color=color, right=column in {0, 6, 7, 8, 10}),
+                )
+        self.tabs.setCurrentIndex(4)
 
     def _selected_symbol(self) -> str:
         row = self.table.currentRow()
@@ -317,24 +616,97 @@ class PortfolioWorkspace(QWidget):
     @Slot()
     def _create(self) -> None:
         if self.new_name.text().strip():
-            name = self.store.create(self.new_name.text(), self.currency.text())
+            name = self.store.create(self.new_name.text(), self.new_base.currentText())
             self.command_requested.emit(f"PORT {name}")
 
     @Slot()
-    def _upsert(self) -> None:
+    def _book_trade(self) -> None:
         try:
-            self.store.upsert(
-                self.symbol.text(), float(self.quantity.text()), float(self.cost.text()),
-                self.currency.text(), self.model.name,
+            self.store.record_trade(
+                self.symbol.text(),
+                self.trade_side.currentText(),
+                float(self.quantity.text()),
+                float(self.cost.text()),
+                fees=float(self.trade_fees.text() or 0),
+                currency=self.currency.text(),
+                fx_rate=float(self.trade_fx.text() or 1),
+                trade_date=self.trade_date.text(),
+                name=self.model.name,
             )
-        except ValueError:
+        except (TypeError, ValueError) as exc:
+            self._show_action_error("TRADE REJECTED", exc)
             return
         self.command_requested.emit(f"PORT {self.model.name}")
+
+    @Slot()
+    def _book_cash(self) -> None:
+        try:
+            self.store.record_cash_flow(
+                self.cash_kind.currentText(),
+                float(self.cash_amount.text()),
+                currency=self.cash_currency.text(),
+                fx_rate=float(self.cash_fx.text() or 1),
+                flow_date=self.cash_date.text(),
+                symbol=self.cash_symbol.text(),
+                name=self.model.name,
+            )
+        except (TypeError, ValueError) as exc:
+            self._show_action_error("CASH FLOW REJECTED", exc)
+            return
+        self.command_requested.emit(f"PORT {self.model.name}")
+
+    def _show_action_error(self, prefix: str, error: Exception) -> None:
+        message = " ".join(str(error).split())[:180]
+        self.action_status.setText(f"{prefix}  |  {message}")
+        self.action_status.setStyleSheet(
+            f"color:{AJAX_RED};font-weight:bold;padding:0 5px"
+        )
+
+    @Slot()
+    def _choose_import(self) -> None:
+        filename, _filter = QFileDialog.getOpenFileName(
+            self,
+            "Import broker activity",
+            str(Path.home()),
+            "Broker CSV (*.csv *.txt)",
+        )
+        if not filename:
+            return
+        try:
+            preview = preview_broker_csv(filename, default_currency=self.model.base_currency)
+        except (OSError, ValueError) as exc:
+            self.import_status.setText(f"IMPORT ERROR  |  {' '.join(str(exc).split())[:180]}")
+            self.import_status.setStyleSheet(f"color:{AJAX_RED};font-weight:bold;padding:0 5px")
+            self.tabs.setCurrentIndex(4)
+            return
+        self._set_import_preview(preview)
+
+    @Slot()
+    def _apply_import(self) -> None:
+        if self._import_preview is None:
+            return
+        result = apply_broker_import(self._import_preview, self.model.name, self.store)
+        self.import_status.setText(
+            f"IMPORT COMPLETE  |  ADDED {result.imported}  |  "
+            f"DUPLICATES {result.duplicates}  |  FAILED {result.failed}"
+        )
+        self.import_status.setStyleSheet(
+            f"color:{AJAX_GREEN if result.failed == 0 else AJAX_AMBER};font-weight:bold;padding:0 5px"
+        )
+        self.apply_import_button.setEnabled(False)
+        if result.imported:
+            self.command_requested.emit(f"PORT {self.model.name}")
 
     @Slot()
     def _remove(self) -> None:
         symbol = self._selected_symbol()
         if symbol:
+            if self.store.has_transaction_history(symbol, self.model.name):
+                self._show_action_error(
+                    "REMOVE REJECTED",
+                    ValueError("ledger-managed positions must be closed with a SELL trade"),
+                )
+                return
             self.store.remove(symbol, self.model.name)
             self.command_requested.emit(f"PORT {self.model.name}")
 

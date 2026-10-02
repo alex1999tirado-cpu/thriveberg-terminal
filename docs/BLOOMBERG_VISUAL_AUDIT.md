@@ -15,6 +15,21 @@ is introduced without a reviewed screen family.
 - The screen follows the shared terminal grammar: flat numbered tabs, real table
   columns, amber actions and values, cyan section labels, and explicit status colors.
 
+## 2026-10-02 Portfolio Accounting Pass
+
+- `PORT` now uses five native views for holdings, attribution, transactions, the
+  cash ledger and a broker-import preview. Every dataset uses real columns and
+  preserves the dense full-width terminal layout.
+- Holdings expose native and base-currency values, weighted cost, live price,
+  FX conversion, P&L, weight, provider and data quality. NAV reconciles with net
+  external flows and total P&L, including cash taxes and fees.
+- Transaction and cash-entry controls reject invalid operations visibly. A
+  ledger-managed position cannot be deleted outside its transaction history.
+- Broker rows are color-coded `READY` or `ERROR` before any write occurs, and
+  applying the same export twice does not duplicate transactions.
+- Visual validation covered all five tabs at 1920 x 1080 with mixed USD/EUR
+  positions, realized P&L, dividends, taxes and multiple data providers.
+
 ## 2026-09-28 Quality Pass
 
 - `HOME` now opens the working multi-asset monitor after login instead of an
@@ -81,6 +96,7 @@ is introduced without a reviewed screen family.
 | TEN_Q | 10-Q filing | Fundamentals | Reviewed |
 | EXPORT | XLS | Fundamentals | Reviewed |
 | SCREENER | EQS | Fundamentals | Reviewed |
+| PORTFOLIO | PORT | Portfolio accounting | Reviewed; five-view native ledger |
 | DATA_QUALITY | DQM / data diagnostics | Support | Reviewed; native four-view monitor |
 | CHART | GP | Price chart | Rebuilt with Lightweight Charts |
 | RISK | GP analytics view | Price chart | Fixed; now routes to live chart |

@@ -1,20 +1,22 @@
 # Security audit - 2026-10-02
 
-Scope: THRIVEBERG Terminal 0.5.0 Beta 013 source tree, packaged application and
+Scope: THRIVEBERG Terminal 0.5.0 Beta 014 source tree, packaged application and
 Windows installer.
 
 ## Results
 
-- `pytest`: 238 passed.
+- `pytest`: 248 passed.
 - `pip-audit`: no known vulnerable installed dependencies.
 - Bandit: no medium- or high-severity findings after hardening.
 - `detect-secrets`: no new findings in the changed source, test or documentation files.
-- Installer SHA-256: `DC9859EB57C8AA40AED0F5762CCBD1B83A6F39FA56AF9B680C6F698F648A59DD`.
-- Microsoft Defender custom scan: zero detections for the Beta 013 installer.
-- Packaged smoke tests: successful `DQM` provider dashboard and live `DQM AAPL`
-  cross-source comparison renders at 1920x1040.
-- Local `UPD` inventory: Beta 013 detected first with a verified checksum while
-  Betas 012 and 011 remain available.
+- Installer SHA-256: `E337282CD0E833BC343E68E486586217A77DAE01C09051B4CCD96043DF5DE56A`.
+- Packaged executable SHA-256: `6A071156C5A109F99BC7407E312394B7B4A0957C62759BFC6A71B6F49438758C`.
+- Microsoft Defender custom scans: zero detections for the Beta 014 installer
+  and packaged executable.
+- Packaged smoke test: successful `PORT` render at 1920x1080 using an isolated
+  multi-currency ledger with trades, realized P&L, income, fees and cash.
+- Local `UPD` inventory: Beta 014 staged with a verified checksum while Beta 013
+  remains available.
 
 ## Hardening included
 
@@ -30,7 +32,7 @@ Windows installer.
 
 ## Residual risks
 
-- Beta 013 is not code signed. SHA-256 verification detects modification but
+- Beta 014 is not code signed. SHA-256 verification detects modification but
   does not establish publisher identity.
 - Public market-data endpoints can be delayed, rate limited, changed, or
   unavailable. Quality labels must remain visible and are not a trading SLA.

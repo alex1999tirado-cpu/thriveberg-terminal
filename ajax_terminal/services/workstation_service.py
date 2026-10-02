@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import math
 import re
 import sys
+from collections import defaultdict
 from dataclasses import dataclass, fields
 from datetime import datetime
 from pathlib import Path
@@ -15,7 +17,14 @@ from ajax_terminal.models.quote import DataQuality, Quote, StatementType
 from ajax_terminal.services.equity_research_service import EquityResearchService
 from ajax_terminal.services.market_service import MarketService
 from ajax_terminal.storage.cache import WatchlistStore
-from ajax_terminal.storage.workstation import AlertRule, AlertStore, PortfolioPosition, PortfolioStore
+from ajax_terminal.storage.workstation import (
+    AlertRule,
+    AlertStore,
+    PortfolioCashFlow,
+    PortfolioPosition,
+    PortfolioStore,
+    PortfolioTransaction,
+)
 
 
 EVENT_MARKET_CAP_FILTERS = (
@@ -89,6 +98,22 @@ class PortfolioLine:
     profit_loss: float | None
     profit_loss_percent: float | None
     weight_percent: float | None
+    fx_rate: float | None = 1.0
+    native_market_value: float | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class PortfolioAttributionLine:
+    symbol: str
+    market_value: float
+    weight_percent: float | None
+    unrealized_pnl: float
+    realized_pnl: float
+    income: float
+    fees: float
+    total_pnl: float
+    contribution_bp: float | None
+    cash_expenses: float = 0.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -100,6 +125,19 @@ class PortfolioLoad:
     market_value: float
     book_value: float
     profit_loss: float
+    transactions: tuple[PortfolioTransaction, ...] = ()
+    cash_flows: tuple[PortfolioCashFlow, ...] = ()
+    attribution: tuple[PortfolioAttributionLine, ...] = ()
+    cash_balance: float = 0.0
+    net_asset_value: float = 0.0
+    realized_pnl: float = 0.0
+    unrealized_pnl: float = 0.0
+    income: float = 0.0
+    fees: float = 0.0
+    invested_capital: float = 0.0
+    total_return_percent: float | None = None
+    cash_expenses: float = 0.0
+    net_external_flow: float = 0.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -308,7 +346,26 @@ def load_portfolio(args: Iterable[str], store: PortfolioStore | None = None) -> 
     name = "MAIN"
     if tokens:
         action = tokens[0]
-        if action == "ADD" and len(tokens) >= 4:
+        if action in {"BUY", "SELL"} and len(tokens) >= 4:
+            portfolios.record_trade(
+                tokens[1],
+                action,
+                float(tokens[2]),
+                float(tokens[3]),
+                currency=tokens[4] if len(tokens) >= 5 else "",
+                fees=float(tokens[5]) if len(tokens) >= 6 else 0.0,
+                trade_date=tokens[6] if len(tokens) >= 7 else None,
+                name="MAIN",
+            )
+        elif action == "CASH" and len(tokens) >= 3:
+            portfolios.record_cash_flow(
+                tokens[1],
+                float(tokens[2]),
+                currency=tokens[3] if len(tokens) >= 4 else "",
+                flow_date=tokens[4] if len(tokens) >= 5 else None,
+                name="MAIN",
+            )
+        elif action == "ADD" and len(tokens) >= 4:
             portfolios.upsert(
                 tokens[1], float(tokens[2]), float(tokens[3]),
                 tokens[4] if len(tokens) >= 5 else "", "MAIN",
@@ -324,33 +381,183 @@ def load_portfolio(args: Iterable[str], store: PortfolioStore | None = None) -> 
         name = portfolios.create(name)
         names = portfolios.names()
     positions = portfolios.positions(name)
+    base_currency = portfolios.base_currency(name)
 
-    async def load_quotes() -> list[Quote]:
-        return await MarketService().bulk_quotes([position.symbol for position in positions], allow_mock=False)
+    async def load_market() -> tuple[list[Quote], dict[str, float | None]]:
+        market = MarketService()
+        quotes = await market.bulk_quotes(
+            [position.symbol for position in positions],
+            allow_mock=False,
+        )
+        currencies = {
+            (quote.currency or position.currency or base_currency).upper()
+            for position, quote in zip(positions, quotes)
+        }
+        rates = {
+            currency: await _portfolio_fx_rate(currency, base_currency, market)
+            for currency in sorted(currencies)
+        }
+        return quotes, rates
 
-    quotes = asyncio.run(load_quotes()) if positions else []
+    quotes, fx_rates = asyncio.run(load_market()) if positions else ([], {})
     values = [
-        position.quantity * quote.price if quote.price is not None else None
+        (
+            position.quantity
+            * quote.price
+            * fx_rates.get((quote.currency or position.currency or base_currency).upper(), 1.0)
+            if quote.price is not None
+            and fx_rates.get((quote.currency or position.currency or base_currency).upper(), 1.0)
+            is not None
+            else None
+        )
         for position, quote in zip(positions, quotes)
     ]
     total_market = sum(value for value in values if value is not None)
     lines: list[PortfolioLine] = []
     for position, quote, market_value in zip(positions, quotes, values):
-        book = position.quantity * position.cost_basis
+        currency = (quote.currency or position.currency or base_currency).upper()
+        fx_rate = fx_rates.get(currency, 1.0 if currency == base_currency else None)
+        base_cost = position.cost_basis_base
+        if base_cost is None and fx_rate is not None:
+            base_cost = position.cost_basis * fx_rate
+        book = position.quantity * base_cost if base_cost is not None else 0.0
         profit = market_value - book if market_value is not None else None
         profit_percent = profit / abs(book) * 100.0 if profit is not None and book else None
         weight = market_value / total_market * 100.0 if market_value is not None and total_market else None
-        lines.append(PortfolioLine(position, quote, market_value, book, profit, profit_percent, weight))
+        native_value = position.quantity * quote.price if quote.price is not None else None
+        lines.append(
+            PortfolioLine(
+                position,
+                quote,
+                market_value,
+                book,
+                profit,
+                profit_percent,
+                weight,
+                fx_rate,
+                native_value,
+            )
+        )
     total_book = sum(line.book_value for line in lines)
+    transactions = tuple(portfolios.transactions(name))
+    cash_flows = tuple(portfolios.cash_flows(name))
+    realized_by_symbol: dict[str, float] = defaultdict(float)
+    fee_by_symbol: dict[str, float] = defaultdict(float)
+    income_by_symbol: dict[str, float] = defaultdict(float)
+    cash_expense_by_symbol: dict[str, float] = defaultdict(float)
+    for transaction in transactions:
+        realized_by_symbol[transaction.symbol] += transaction.realized_pnl
+        fee_by_symbol[transaction.symbol] += transaction.fees * transaction.fx_rate
+    for cash_flow in cash_flows:
+        if cash_flow.kind in {"DIVIDEND", "INTEREST", "OTHER_IN"}:
+            income_by_symbol[cash_flow.symbol or "CASH"] += cash_flow.amount * cash_flow.fx_rate
+        elif cash_flow.kind in {"TAX", "FEE", "OTHER_OUT"}:
+            symbol = cash_flow.symbol or "CASH"
+            cash_expense_by_symbol[symbol] += cash_flow.amount * cash_flow.fx_rate
+            if cash_flow.kind == "FEE":
+                fee_by_symbol[symbol] += abs(cash_flow.amount * cash_flow.fx_rate)
+    unrealized_by_symbol = {
+        line.position.symbol: line.profit_loss or 0.0
+        for line in lines
+    }
+    market_by_symbol = {
+        line.position.symbol: line.market_value or 0.0
+        for line in lines
+    }
+    weight_by_symbol = {
+        line.position.symbol: line.weight_percent
+        for line in lines
+    }
+    bought_symbols = {transaction.symbol for transaction in transactions if transaction.side == "BUY"}
+    ledger_capital = portfolios.invested_capital(name)
+    legacy_capital = sum(
+        line.book_value for line in lines if line.position.symbol not in bought_symbols
+    )
+    invested_capital = ledger_capital + legacy_capital
+    symbols = sorted(
+        set(unrealized_by_symbol)
+        | set(realized_by_symbol)
+        | set(income_by_symbol)
+        | set(fee_by_symbol)
+        | set(cash_expense_by_symbol)
+    )
+    attribution: list[PortfolioAttributionLine] = []
+    for symbol in symbols:
+        unrealized = unrealized_by_symbol.get(symbol, 0.0)
+        realized = realized_by_symbol.get(symbol, 0.0)
+        income = income_by_symbol.get(symbol, 0.0)
+        cash_expenses = cash_expense_by_symbol.get(symbol, 0.0)
+        total = unrealized + realized + income + cash_expenses
+        attribution.append(
+            PortfolioAttributionLine(
+                symbol,
+                market_by_symbol.get(symbol, 0.0),
+                weight_by_symbol.get(symbol),
+                unrealized,
+                realized,
+                income,
+                fee_by_symbol.get(symbol, 0.0),
+                total,
+                total / invested_capital * 10_000.0 if invested_capital else None,
+                cash_expenses,
+            )
+        )
+    unrealized_total = sum(unrealized_by_symbol.values())
+    realized_total = sum(realized_by_symbol.values())
+    income_total = sum(income_by_symbol.values())
+    cash_expense_total = sum(cash_expense_by_symbol.values())
+    total_profit = unrealized_total + realized_total + income_total + cash_expense_total
+    cash_balance = portfolios.cash_balance(name)
+    net_external_flow = portfolios.net_external_flow(name)
     return PortfolioLoad(
         name,
         tuple(names),
-        portfolios.base_currency(name),
+        base_currency,
         tuple(lines),
         total_market,
         total_book,
-        total_market - total_book,
+        total_profit,
+        transactions,
+        cash_flows,
+        tuple(attribution),
+        cash_balance,
+        total_market + cash_balance,
+        realized_total,
+        unrealized_total,
+        income_total,
+        sum(transaction.fees * transaction.fx_rate for transaction in transactions),
+        invested_capital,
+        total_profit / invested_capital * 100.0 if invested_capital else None,
+        cash_expense_total,
+        net_external_flow,
     )
+
+
+async def _portfolio_fx_rate(
+    currency: str,
+    base_currency: str,
+    market: MarketService,
+) -> float | None:
+    source = currency.strip().upper()
+    target = base_currency.strip().upper()
+    if not source or source == target:
+        return 1.0
+
+    async def usd_value(code: str) -> float | None:
+        if code == "USD":
+            return 1.0
+        direct = await market.quote(f"{code}USD", allow_mock=False)
+        if direct.price is not None and math.isfinite(direct.price) and direct.price > 0:
+            return direct.price
+        inverse = await market.quote(f"USD{code}", allow_mock=False)
+        if inverse.price is not None and math.isfinite(inverse.price) and inverse.price > 0:
+            return 1.0 / inverse.price
+        return None
+
+    source_usd, target_usd = await asyncio.gather(usd_value(source), usd_value(target))
+    if source_usd is None or target_usd is None or target_usd == 0:
+        return None
+    return source_usd / target_usd
 
 
 def load_alerts(args: Iterable[str], store: AlertStore | None = None) -> AlertsLoad:
