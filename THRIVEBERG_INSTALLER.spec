@@ -9,6 +9,7 @@ datas = collect_data_files("textual")
 datas += [("ajax_terminal/ui/themes/ajax.tcss", "ajax_terminal/ui/themes")]
 datas += collect_data_files("ajax_terminal", includes=["charts/assets/*"])
 datas += collect_data_files("ajax_terminal", includes=["assets/*"])
+datas += collect_data_files("ajax_terminal", includes=["games/doom/assets/**/*"])
 image_datas, image_binaries, image_hiddenimports = collect_all("textual_image")
 datas += image_datas
 version_file = os.environ.get("THRIVEBERG_VERSION_FILE", "installer/version_info.txt")

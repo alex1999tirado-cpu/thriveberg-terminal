@@ -51,6 +51,7 @@ COMMANDS = (
     CommandSuggestion("WSP", "Save and restore terminal workspaces"),
     CommandSuggestion("UPD", "Check, install or roll back signed beta releases"),
     CommandSuggestion("DIAG", "System diagnostics and sanitized support bundle"),
+    CommandSuggestion("DOOM", "Play Freedoom Phase 1 with the Chocolate Doom engine"),
     CommandSuggestion("FILINGS AAPL", "Official filings for the listing jurisdiction"),
     CommandSuggestion("10K AAPL", "Latest annual regulatory filings"),
     CommandSuggestion("10Q AAPL", "Latest SEC quarterly filings"),

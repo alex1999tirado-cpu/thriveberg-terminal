@@ -1,0 +1,30 @@
+THRIVEBERG TERMINAL - DOOM COMMAND THIRD-PARTY NOTICES
+
+This distribution does not include DOOM, DOOM II, or any proprietary id
+Software IWAD. The DOOM command uses the independent Chocolate Doom engine
+with the freely redistributable Freedoom Phase 1 game data.
+
+Chocolate Doom 3.1.1
+Project: https://www.chocolate-doom.org/
+Source: https://github.com/chocolate-doom/chocolate-doom/tree/chocolate-doom-3.1.1
+Windows release SHA-256:
+58c34c61ae954493fce5ff01fd553898240a0de25658aa97b43ac9510c49581f
+License: GNU General Public License version 2 or later.
+The complete corresponding 3.1.1 source archive is included at:
+source/chocolate-doom-3.1.1-source.zip
+The complete license is included at:
+licenses/CHOCOLATE-DOOM-COPYING.md
+
+Freedoom Phase 1 0.13.0
+Project: https://freedoom.github.io/
+Source: https://github.com/freedoom/freedoom/releases/tag/v0.13.0
+Release archive SHA-256:
+3f9b264f3e3ce503b4fb7f6bdcb1f419d93c7b546f4df3e874dd878db9688f59
+License: 3-clause BSD license.
+The complete license is included at:
+licenses/FREEDOOM-COPYING.txt
+Contributor and music credits are included under docs/.
+
+Chocolate Doom and Freedoom are independent projects. Their names are used
+only to identify the bundled engine and game data. They do not endorse
+THRIVEBERG Terminal.

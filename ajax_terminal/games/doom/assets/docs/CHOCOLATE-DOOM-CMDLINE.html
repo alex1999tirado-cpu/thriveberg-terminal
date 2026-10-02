@@ -1,0 +1,690 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="" xml:lang="">
+<head>
+  <meta charset="utf-8" />
+  <meta name="generator" content="pandoc" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
+  <title>CMDLINE.doom</title>
+  <style>
+    html {
+      color: #1a1a1a;
+      background-color: #fdfdfd;
+    }
+    body {
+      margin: 0 auto;
+      max-width: 36em;
+      padding-left: 50px;
+      padding-right: 50px;
+      padding-top: 50px;
+      padding-bottom: 50px;
+      hyphens: auto;
+      overflow-wrap: break-word;
+      text-rendering: optimizeLegibility;
+      font-kerning: normal;
+    }
+    @media (max-width: 600px) {
+      body {
+        font-size: 0.9em;
+        padding: 12px;
+      }
+      h1 {
+        font-size: 1.8em;
+      }
+    }
+    @media print {
+      html {
+        background-color: white;
+      }
+      body {
+        background-color: transparent;
+        color: black;
+        font-size: 12pt;
+      }
+      p, h2, h3 {
+        orphans: 3;
+        widows: 3;
+      }
+      h2, h3, h4 {
+        page-break-after: avoid;
+      }
+    }
+    p {
+      margin: 1em 0;
+    }
+    a {
+      color: #1a1a1a;
+    }
+    a:visited {
+      color: #1a1a1a;
+    }
+    img {
+      max-width: 100%;
+    }
+    svg {
+      height: auto;
+      max-width: 100%;
+    }
+    h1, h2, h3, h4, h5, h6 {
+      margin-top: 1.4em;
+    }
+    h5, h6 {
+      font-size: 1em;
+      font-style: italic;
+    }
+    h6 {
+      font-weight: normal;
+    }
+    ol, ul {
+      padding-left: 1.7em;
+      margin-top: 1em;
+    }
+    li > ol, li > ul {
+      margin-top: 0;
+    }
+    blockquote {
+      margin: 1em 0 1em 1.7em;
+      padding-left: 1em;
+      border-left: 2px solid #e6e6e6;
+      color: #606060;
+    }
+    code {
+      font-family: Menlo, Monaco, Consolas, 'Lucida Console', monospace;
+      font-size: 85%;
+      margin: 0;
+      hyphens: manual;
+    }
+    pre {
+      margin: 1em 0;
+      overflow: auto;
+    }
+    pre code {
+      padding: 0;
+      overflow: visible;
+      overflow-wrap: normal;
+    }
+    .sourceCode {
+     background-color: transparent;
+     overflow: visible;
+    }
+    hr {
+      border: none;
+      border-top: 1px solid #1a1a1a;
+      height: 1px;
+      margin: 1em 0;
+    }
+    table {
+      margin: 1em 0;
+      border-collapse: collapse;
+      width: 100%;
+      overflow-x: auto;
+      display: block;
+      font-variant-numeric: lining-nums tabular-nums;
+    }
+    table caption {
+      margin-bottom: 0.75em;
+    }
+    tbody {
+      margin-top: 0.5em;
+      border-top: 1px solid #1a1a1a;
+      border-bottom: 1px solid #1a1a1a;
+    }
+    th {
+      border-top: 1px solid #1a1a1a;
+      padding: 0.25em 0.5em 0.25em 0.5em;
+    }
+    td {
+      padding: 0.125em 0.5em 0.25em 0.5em;
+    }
+    header {
+      margin-bottom: 4em;
+      text-align: center;
+    }
+    #TOC li {
+      list-style: none;
+    }
+    #TOC ul {
+      padding-left: 1.3em;
+    }
+    #TOC > ul {
+      padding-left: 0;
+    }
+    #TOC a:not(:hover) {
+      text-decoration: none;
+    }
+    code{white-space: pre-wrap;}
+    span.smallcaps{font-variant: small-caps;}
+    div.columns{display: flex; gap: min(4vw, 1.5em);}
+    div.column{flex: auto; overflow-x: auto;}
+    div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+    /* The extra [class] is a hack that increases specificity enough to
+       override a similar rule in reveal.js */
+    ul.task-list[class]{list-style: none;}
+    ul.task-list li input[type="checkbox"] {
+      font-size: inherit;
+      width: 0.8em;
+      margin: 0 0.8em 0.2em -1.6em;
+      vertical-align: middle;
+    }
+    .display.math{display: block; text-align: center; margin: 0.5rem auto;}
+  </style>
+  
+  <!-- Tweaks to the pandoc output style to make the resulting HTML
+       look much nicer. -->
+
+  <style>
+  body {
+      background-color: white;
+      margin-top: 1.5em;
+      margin-bottom: 4em;
+
+      max-width: 38em;
+      margin-left: auto;
+      margin-right: auto;
+      box-sizing: border-box;
+
+      padding: 0;
+      padding-left: 1.3em;
+      padding-right: 1.3em;
+
+      font-size: large;
+      color: #555;
+      line-height: 1.6;
+
+      text-align: justify;
+      overflow-wrap: break-word;
+  }
+
+  header {
+        font-family: serif;
+        margin-top: 0;
+        margin-bottom: 0.2em;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+        margin-top: 0.5em;
+        margin-bottom: 0.2em;
+  }
+
+  p {
+        margin-top: 0;
+        margin-bottom: 0.8em;
+  }
+
+  dl {
+        margin-block-start: 0.5em;
+  }
+  </style>
+
+</head>
+<body>
+<h1 id="command-line-parameters">Command line parameters</h1>
+<p>This is a full list of the supported command line parameters. A
+number of additional parameters are supported in addition to those
+present in the DOS version.</p>
+<h2 id="general-options">General options</h2>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>-config &lt;file&gt;</td>
+<td>Load main configuration from the specified file, instead of the
+default.</td>
+</tr>
+<tr>
+<td>-devparm</td>
+<td>Developer mode. F1 saves a screenshot in the current working
+directory.</td>
+</tr>
+<tr>
+<td>-extraconfig &lt;file&gt;</td>
+<td>Load additional configuration from the specified file, instead of
+the default.</td>
+</tr>
+<tr>
+<td>-file &lt;files&gt;</td>
+<td>Load the specified PWAD files. Each succeeding argument is treated
+as a PWAD file name until one starts with a dash or the argument list is
+exhausted.</td>
+</tr>
+<tr>
+<td>-iwad &lt;file&gt;</td>
+<td>Specify an IWAD file to use.</td>
+</tr>
+<tr>
+<td>-nomusic</td>
+<td>Disable music.</td>
+</tr>
+<tr>
+<td>-nomusicpacks</td>
+<td>Disable substitution music packs.</td>
+</tr>
+<tr>
+<td>-nosfx</td>
+<td>Disable sound effects.</td>
+</tr>
+<tr>
+<td>-nosound</td>
+<td>Disable all sound output.</td>
+</tr>
+<tr>
+<td>-response &lt;file&gt;</td>
+<td>Load extra command-line arguments from the given response file.
+Arguments read from the file are inserted into the command line,
+replacing this argument. A response file can also be loaded using the
+abbreviated syntax '@file.rsp'.</td>
+</tr>
+<tr>
+<td>-savedir &lt;directory&gt;</td>
+<td>Specify a path from which to load and save games. If the directory
+does not exist then it will automatically be created.</td>
+</tr>
+<tr>
+<td>-version</td>
+<td>Print the program version and exit.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="game-start-options">Game start options</h2>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>-episode &lt;n&gt;</td>
+<td>Start playing episode n (1-4).</td>
+</tr>
+<tr>
+<td>-fast</td>
+<td>Monsters move faster.</td>
+</tr>
+<tr>
+<td>-loadgame &lt;s&gt;</td>
+<td>Load the game in slot s.</td>
+</tr>
+<tr>
+<td>-nomonsters</td>
+<td>Disable monsters.</td>
+</tr>
+<tr>
+<td>-respawn</td>
+<td>Monsters respawn after being killed.</td>
+</tr>
+<tr>
+<td>-skill &lt;skill&gt;</td>
+<td>Set the game skill, 1-5 (1: easiest, 5: hardest). A skill of 0
+disables all monsters.</td>
+</tr>
+<tr>
+<td>-turbo &lt;x&gt;</td>
+<td>Turbo mode. The player's speed is multiplied by x%. If unspecified,
+x defaults to 200. Values are rounded up to 10 and down to 400.</td>
+</tr>
+<tr>
+<td>-warp [&lt;x&gt; &lt;y&gt; | &lt;xy&gt;]</td>
+<td>Start a game immediately, warping to ExMy (Doom 1) or MAPxy (Doom
+2).</td>
+</tr>
+</tbody>
+</table>
+<h2 id="display-options">Display options</h2>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>-1</td>
+<td>Don't scale up the screen. Implies -window.</td>
+</tr>
+<tr>
+<td>-2</td>
+<td>Double up the screen to 2x its normal size. Implies -window.</td>
+</tr>
+<tr>
+<td>-3</td>
+<td>Double up the screen to 3x its normal size. Implies -window.</td>
+</tr>
+<tr>
+<td>-display &lt;x&gt;</td>
+<td>Specify the display number on which to show the screen.</td>
+</tr>
+<tr>
+<td>-fullscreen</td>
+<td>Run in fullscreen mode.</td>
+</tr>
+<tr>
+<td>-geometry &lt;WxH&gt;</td>
+<td>Specify the dimensions of the window. Implies -window.</td>
+</tr>
+<tr>
+<td>-height &lt;H&gt;</td>
+<td>Specify the screen height, in pixels. Implies -window.</td>
+</tr>
+<tr>
+<td>-noblit</td>
+<td>Disable blitting the screen.</td>
+</tr>
+<tr>
+<td>-nodraw</td>
+<td>Disable rendering the screen entirely.</td>
+</tr>
+<tr>
+<td>-nograbmouse</td>
+<td>Don't grab the mouse when running in windowed mode.</td>
+</tr>
+<tr>
+<td>-nomouse</td>
+<td>Disable the mouse.</td>
+</tr>
+<tr>
+<td>-width &lt;W&gt;</td>
+<td>Specify the screen width, in pixels. Implies -window.</td>
+</tr>
+<tr>
+<td>-window</td>
+<td>Run in a window.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="networking-options">Networking options</h2>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>-altdeath</td>
+<td>Start a deathmatch 2.0 game. Weapons do not stay in place and all
+items respawn after 30 seconds.</td>
+</tr>
+<tr>
+<td>-autojoin</td>
+<td>Automatically search the local LAN for a multiplayer server and join
+it.</td>
+</tr>
+<tr>
+<td>-avg</td>
+<td>Austin Virtual Gaming: end levels after 20 minutes.</td>
+</tr>
+<tr>
+<td>-connect &lt;address&gt;</td>
+<td>Connect to a multiplayer server running on the given address.</td>
+</tr>
+<tr>
+<td>-deathmatch</td>
+<td>Start a deathmatch game.</td>
+</tr>
+<tr>
+<td>-dedicated</td>
+<td>Start a dedicated server, routing packets but not participating in
+the game itself.</td>
+</tr>
+<tr>
+<td>-dup &lt;n&gt;</td>
+<td>Reduce the resolution of the game by a factor of n, reducing the
+amount of network bandwidth needed.</td>
+</tr>
+<tr>
+<td>-extratics &lt;n&gt;</td>
+<td>Send n extra tics in every packet as insurance against dropped
+packets.</td>
+</tr>
+<tr>
+<td>-left</td>
+<td>Run as the left screen in three screen mode.</td>
+</tr>
+<tr>
+<td>-localsearch</td>
+<td>Search the local LAN for running servers.</td>
+</tr>
+<tr>
+<td>-nodes &lt;n&gt;</td>
+<td>Autostart the netgame when n nodes (clients) have joined the
+server.</td>
+</tr>
+<tr>
+<td>-oldsync</td>
+<td>Use original network client sync code rather than the improved sync
+code.</td>
+</tr>
+<tr>
+<td>-port &lt;n&gt;</td>
+<td>Use the specified UDP port for communications, instead of the
+default (2342).</td>
+</tr>
+<tr>
+<td>-privateserver</td>
+<td>When running a server, don't register with the global master server.
+Implies -server.</td>
+</tr>
+<tr>
+<td>-query &lt;address&gt;</td>
+<td>Query the status of the server running on the given IP address.</td>
+</tr>
+<tr>
+<td>-right</td>
+<td>Run as the right screen in three screen mode.</td>
+</tr>
+<tr>
+<td>-search</td>
+<td>Query the Internet master server for a global list of active
+servers.</td>
+</tr>
+<tr>
+<td>-server</td>
+<td>Start a multiplayer server, listening for connections.</td>
+</tr>
+<tr>
+<td>-servername &lt;name&gt;</td>
+<td>When starting a network server, specify a name for the server.</td>
+</tr>
+<tr>
+<td>-solo-net</td>
+<td>Start the game playing as though in a netgame with a single player.
+This can also be used to play back single player netgame demos.</td>
+</tr>
+<tr>
+<td>-timer &lt;n&gt;</td>
+<td>For multiplayer games: exit each level after n minutes.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="dehacked-and-wad-merging">Dehacked and WAD merging</h2>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>-aa &lt;files&gt;</td>
+<td>Equivalent to "-af &lt;files&gt; -as &lt;files&gt;".</td>
+</tr>
+<tr>
+<td>-af &lt;files&gt;</td>
+<td>Simulates the behavior of NWT's -af option, merging flats into the
+main IWAD directory. Multiple files may be specified.</td>
+</tr>
+<tr>
+<td>-as &lt;files&gt;</td>
+<td>Simulates the behavior of NWT's -as option, merging sprites into the
+main IWAD directory. Multiple files may be specified.</td>
+</tr>
+<tr>
+<td>-deh &lt;files&gt;</td>
+<td>Load the given dehacked patch(es)</td>
+</tr>
+<tr>
+<td>-dehlump</td>
+<td>Load Dehacked patches from DEHACKED lumps contained in one of the
+loaded PWAD files.</td>
+</tr>
+<tr>
+<td>-merge &lt;files&gt;</td>
+<td>Simulates the behavior of deutex's -merge option, merging a PWAD
+into the main IWAD. Multiple files may be specified.</td>
+</tr>
+<tr>
+<td>-noautoload</td>
+<td>Disable auto-loading of .wad and .deh files.</td>
+</tr>
+<tr>
+<td>-nocheats</td>
+<td>Ignore cheats in dehacked files.</td>
+</tr>
+<tr>
+<td>-nodeh</td>
+<td>Disable automatic loading of Dehacked patches for certain IWAD
+files.</td>
+</tr>
+<tr>
+<td>-nwtmerge &lt;files&gt;</td>
+<td>Simulates the behavior of NWT's -merge option. Multiple files may be
+specified.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="demo-options">Demo options</h2>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>-longtics</td>
+<td>Record a high resolution "Doom 1.91" demo.</td>
+</tr>
+<tr>
+<td>-maxdemo &lt;size&gt;</td>
+<td>Specify the demo buffer size (KiB)</td>
+</tr>
+<tr>
+<td>-playdemo &lt;demo&gt;</td>
+<td>Play back the demo named demo.lmp.</td>
+</tr>
+<tr>
+<td>-record &lt;x&gt;</td>
+<td>Record a demo named x.lmp.</td>
+</tr>
+<tr>
+<td>-shorttics</td>
+<td>Play with low turning resolution to emulate demo recording.</td>
+</tr>
+<tr>
+<td>-strictdemos</td>
+<td>When recording or playing back demos, disable any extensions of the
+vanilla demo format - record demos as vanilla would do, and play back
+demos as vanilla would do.</td>
+</tr>
+<tr>
+<td>-timedemo &lt;demo&gt;</td>
+<td>Play back the demo named demo.lmp, determining the framerate of the
+screen.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="compatibility">Compatibility</h2>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>-donut &lt;x&gt; &lt;y&gt;</td>
+<td>Use the specified magic values when emulating behavior caused by
+memory overruns from improperly constructed donuts. In Vanilla Doom this
+can differ depending on the operating system. The default (if this
+option is not specified) is to emulate the behavior when running under
+Windows 98.</td>
+</tr>
+<tr>
+<td>-gameversion &lt;version&gt;</td>
+<td>Emulate a specific version of Doom. Valid values are "1.2", "1.5",
+"1.666", "1.7", "1.8", "1.9", "ultimate", "final", "final2", "hacx" and
+"chex".</td>
+</tr>
+<tr>
+<td>-pack &lt;pack&gt;</td>
+<td>Explicitly specify a Doom II "mission pack" to run as, instead of
+detecting it based on the filename. Valid values are: "doom2", "tnt" and
+"plutonia".</td>
+</tr>
+<tr>
+<td>-setmem &lt;version&gt;</td>
+<td>Specify DOS version to emulate for NULL pointer dereference
+emulation. Supported versions are: dos622, dos71, dosbox. The default is
+to emulate DOS 7.1 (Windows 98).</td>
+</tr>
+<tr>
+<td>-spechit &lt;n&gt;</td>
+<td>Use the specified magic value when emulating spechit overruns.</td>
+</tr>
+<tr>
+<td>-statdump &lt;filename&gt;</td>
+<td>Dump statistics information to the specified file on the levels that
+were played. The output from this option matches the output from
+statdump.exe (see ctrlapi.zip in the /idgames archive).</td>
+</tr>
+</tbody>
+</table>
+<h2 id="obscure-and-less-used-options">Obscure and less-used
+options</h2>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>-cdrom</td>
+<td>Save configuration data and savegames in c:\doomdata, allowing play
+from CD. (windows only)</td>
+</tr>
+<tr>
+<td>-dumpsubstconfig &lt;file&gt;</td>
+<td>Read all MIDI files from loaded WAD files, dump an example
+substitution music config file to the specified file, and quit.</td>
+</tr>
+<tr>
+<td>-mb &lt;mb&gt;</td>
+<td>Specify the heap size, in MiB.</td>
+</tr>
+<tr>
+<td>-mmap</td>
+<td>Use the OS's virtual memory subsystem to map WAD files directly into
+memory.</td>
+</tr>
+<tr>
+<td>-nogui</td>
+<td>If specified, don't show a GUI window for error messages when the
+game exits with an error.</td>
+</tr>
+</tbody>
+</table>
+</body>
+</html>

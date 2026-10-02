@@ -50,6 +50,15 @@ OVDV turns real listed-option observations into an interactive implied-volatilit
 
 ![Interactive global macro map with Spain selected](screenshots/global-macro-map.png)
 
+### DOOM command
+
+![Freedoom Phase 1 embedded in THRIVEBERG Terminal](screenshots/doom-freedoom.png)
+
+`DOOM` launches the complete Freedoom Phase 1 campaign through Chocolate Doom
+inside the terminal workspace. The native game window can be detached and
+docked again with `POP OUT`; configuration and savegames stay under the current
+Windows user's local application data. No proprietary DOOM IWAD is distributed.
+
 ### Data integrity and provider health
 
 ![THRIVEBERG provider health and cache diagnostics](screenshots/data-quality-monitor.png)
@@ -143,6 +152,7 @@ its provider and quality state; unavailable observations remain unavailable.
 - Jurisdiction-aware filing discovery: SEC EDGAR for US listings, LEI-resolved ESEF annual reports across the EEA, Companies House for UK accounts when `COMPANIES_HOUSE_API_KEY` is configured, and official disclosure portals for Canada, Japan, Korea, China, India, Brazil, Australia, Hong Kong, Switzerland and other mapped exchanges. Unknown foreign suffixes never fall back to SEC.
 - Equity research functions for financial analysis, estimates, recommendations, relative valuation, dividends, corporate events, and screening.
 - Native PySide6 chart workstations: TradingView Lightweight Charts for `GP`, Apache ECharts for analytical 2D views, and PyVista/VTK for the interactive `OVDV` volatility surface.
+- Embedded `DOOM` workspace powered by Chocolate Doom 3.1.1 and the freely redistributable Freedoom Phase 1 0.13.0 campaign, with native docking, pop-out and local savegames.
 - Persistent SQLite cache and watchlist storage.
 - Native workstation tools: editable named watchlists (`WATC`); multi-currency portfolio accounting, performance attribution, broker CSV import, historical risk, factor exposure, correlation, stress testing and audited corporate-action adjustments (`PORT`); market alerts (`ALRT`); saved multi-factor screens (`EQS`); and a paged corporate calendar (`EVT ALL`) with watchlist, portfolio, market-cap, industry and geographic filters. Global provider and cache diagnostics (`DQM`), field-level source audit (`FLDS`), persistent workspaces (`WSP`), crash recovery, system diagnostics with sanitized support export (`DIAG`), and an Ed25519-signed online beta manager (`UPD`) are also included.
 - Decoupled provider interfaces with cached fallback and explicit unavailable or estimated labels; fictitious market observations are not presented as real data.
@@ -229,7 +239,7 @@ may continue to see a Microsoft SmartScreen warning.
   release metadata.
 - Supabase access is constrained by Auth and row-level security. The bundled
   key is publishable and has no administrative privileges.
-- CI runs 290 tests, `pip-audit`, `detect-secrets`, and Bandit for every change.
+- CI runs 294 tests, `pip-audit`, `detect-secrets`, and Bandit for every change.
 
 See [SECURITY.md](SECURITY.md) for vulnerability reporting and
 [the latest audit](docs/SECURITY_AUDIT.md) for verified results and residual
@@ -377,6 +387,7 @@ DQM AAPL
 WSP
 UPD
 DIAG
+DOOM
 ```
 
 `NEWS` opens the top-stories wire. Use `NEWS <ticker>` for instrument headlines or

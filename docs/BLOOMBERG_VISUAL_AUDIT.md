@@ -90,6 +90,24 @@ is introduced without a reviewed screen family.
 - Both workspaces were visually checked at 1920 x 1080 with no overlap,
   clipping or nested-card styling.
 
+## 2026-10-02 Embedded DOOM Pass
+
+- `DOOM` opens Freedoom Phase 1 in a native Chocolate Doom viewport inside the
+  terminal workspace; it does not open a second terminal tab or an unmanaged
+  game process.
+- The game viewport preserves the terminal system bar, function strip,
+  instrument strip and footer. Its own controls use the existing flat terminal
+  treatment and amber/cyan/white hierarchy.
+- `POP OUT` detaches the same running game window and `DOCK` returns it to its
+  original viewport. Navigation, restart and application shutdown terminate the
+  child process with a bounded fallback and leave no residual process.
+- The 1920x1080 source-build capture was reviewed with 1,199 distinct sampled
+  viewport colors; the native game frame is present, correctly scaled and not
+  blank.
+- Only Freedoom Phase 1 is bundled. No proprietary id Software IWAD is present;
+  engine source, primary licenses, campaign credits and the Spanish manual ship
+  with the application.
+
 ## 2026-09-28 Quality Pass
 
 - `HOME` now opens the working multi-asset monitor after login instead of an
@@ -162,6 +180,7 @@ is introduced without a reviewed screen family.
 | WORKSPACES | WSP | Workspace manager | Support | Reviewed |
 | UPDATES | UPD | Release manager | Support | Reviewed; signed online channel and revalidated cache |
 | DIAGNOSTICS | DIAG | System diagnostics | Support | Reviewed; sanitized support export |
+| DOOM | DOOM | Embedded classic game | Support | Reviewed; native dock/pop-out and verified free-content runtime |
 | CHART | GP | Price chart | Rebuilt with Lightweight Charts |
 | RISK | GP analytics view | Price chart | Fixed; now routes to live chart |
 | OPTIONS | OMON | Derivatives | Reviewed |

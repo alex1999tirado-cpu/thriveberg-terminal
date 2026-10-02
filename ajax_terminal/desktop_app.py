@@ -65,6 +65,7 @@ from ajax_terminal.fundamentals_desktop import (
     load_financial_statement,
     load_security_description,
 )
+from ajax_terminal.games.doom import DoomWorkspace
 from ajax_terminal.equity_research_desktop import (
     AnalystWorkspace,
     DividendsWorkspace,
@@ -224,6 +225,8 @@ def resolve_desktop_command(raw: str, current_symbol: str = "") -> DesktopRoute:
         return DesktopRoute("updates", "", raw=clean)
     if parsed.action == CommandAction.DIAGNOSTICS:
         return DesktopRoute("diagnostics", "", raw=clean)
+    if parsed.action == CommandAction.DOOM:
+        return DesktopRoute("doom", "", raw=clean)
     if parsed.action in {CommandAction.INSTRUMENT, CommandAction.EQUITY}:
         return DesktopRoute("description", parsed.target or current_symbol, raw=clean)
     if parsed.action == CommandAction.DATA_AUDIT:
@@ -870,7 +873,7 @@ class AjaxDesktopWindow(QMainWindow):
         self.stack.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         layout.addWidget(self.stack, 1)
         self.footer = QLabel(
-            "F1 HELP   F2 MARKETS   F5 EQUITY   F8 GP   F9 SOCIAL   F10 OPTIONS   |   WATC  PORT  ALRT  EQS  EVT  FLDS  WSP  UPD"
+            "F1 HELP   F2 MARKETS   F5 EQUITY   F8 GP   F9 SOCIAL   F10 OPTIONS   |   WATC  PORT  ALRT  EQS  EVT  FLDS  WSP  UPD  DOOM"
         )
         self.footer.setObjectName("footerBar")
         layout.addWidget(self.footer)
@@ -1502,6 +1505,7 @@ class AjaxDesktopWindow(QMainWindow):
         tools_menu.addAction("WSP  WORKSPACES", lambda: self.execute_text("WSP"))
         tools_menu.addAction("UPD  BETA RELEASES", lambda: self.execute_text("UPD"))
         tools_menu.addAction("DIAG  SYSTEM DIAGNOSTICS", lambda: self.execute_text("DIAG"))
+        tools_menu.addAction("DOOM  CLASSIC GAME", lambda: self.execute_text("DOOM"))
         tools_menu.addSeparator()
         tools_menu.addAction("DATA CONNECTIONS", self._show_data_connections)
         tools_button.setMenu(tools_menu)
@@ -1702,6 +1706,7 @@ class AjaxDesktopWindow(QMainWindow):
             self.logout()
             return
         route = resolve_desktop_command(raw, self.current_symbol)
+        self.popout_button.setText("POP OUT")
         parsed = parse_command(route.raw)
         if route.kind != "social":
             self.workspace_tabs.setCurrentIndex(0)
@@ -1781,6 +1786,8 @@ class AjaxDesktopWindow(QMainWindow):
                 collect_diagnostics,
                 self._mount_diagnostics,
             )
+        elif route.kind == "doom":
+            self._mount_doom()
         elif route.kind == "ovdv":
             self._load_workspace("PYVISTA / VTK", lambda: _load_surface(route.target), self._mount_ovdv)
         elif route.kind == "option-monitor":
@@ -2226,6 +2233,27 @@ class AjaxDesktopWindow(QMainWindow):
         self.popout_button.setEnabled(False)
         QTimer.singleShot(0, self.workspace_ready.emit)
 
+    def _mount_doom(self) -> None:
+        workspace = DoomWorkspace()
+        workspace.status_changed.connect(
+            lambda message, active=workspace: self._doom_status_changed(active, message)
+        )
+        self._replace_workspace(workspace)
+        self.engine_label.setText("CHOCOLATE DOOM 3.1.1 / FREEDOOM 0.13.0")
+        self.instrument_bar.setText(
+            "DOOM   |   FREEDOOM: PHASE 1   |   FREE IWAD   |   LOCAL SAVEGAMES"
+        )
+        self.popout_button.setEnabled(False)
+
+    def _doom_status_changed(self, workspace: DoomWorkspace, message: str) -> None:
+        if self.stack.currentWidget() is not workspace:
+            return
+        self.statusBar().showMessage(message, 8_000)
+        self.popout_button.setEnabled(workspace.can_pop_out)
+        self.popout_button.setText("DOCK" if "POPPED OUT" in message else "POP OUT")
+        if "READY" in message or "ERROR" in message:
+            self.workspace_ready.emit()
+
     def _show_workspace_manager(self) -> None:
         history = tuple(route.raw for route in self._history if route.raw and route.kind != "workspaces")
         geometry = bytes(self.saveGeometry().toBase64()).decode("ascii")
@@ -2629,6 +2657,11 @@ class AjaxDesktopWindow(QMainWindow):
                 launch_curve_chart(route.target)
             elif route.kind == "ovdv":
                 launch_volatility_surface(route.target)
+            elif route.kind == "doom":
+                workspace = self.stack.currentWidget()
+                if not isinstance(workspace, DoomWorkspace) or not workspace.toggle_pop_out():
+                    return
+                return
             else:
                 return
         except ChartRuntimeError as exc:
@@ -2653,6 +2686,7 @@ class AjaxDesktopWindow(QMainWindow):
             "workspaces": "WSP  |  PERSISTENT WORKSPACES",
             "updates": "UPD  |  BETA RELEASE MANAGER",
             "diagnostics": "DIAG  |  SYSTEM DIAGNOSTICS",
+            "doom": "DOOM  |  FREEDOOM: PHASE 1  |  CLASSIC GAME",
             "ovdv": f"OVDV  |  {route.target}  |  IMPLIED VOLATILITY SURFACE",
             "option-monitor": f"OMON  |  {route.target}  |  OPTION MONITOR",
             "option-valuation": f"OVME  |  {route.target}  |  OPTION VALUATION",
@@ -2968,7 +3002,18 @@ def run_desktop_app(
                     painter = QPainter(frame)
                     painter.drawPixmap(position, native_viewport)
                     painter.end()
+            if isinstance(current, DoomWorkspace) and current.can_pop_out and not current._popped_out:
+                screen = window.screen() or QApplication.primaryScreen()
+                bridge = current._bridge
+                if screen is not None and bridge is not None:
+                    native_game = screen.grabWindow(bridge.hwnd)
+                    if not native_game.isNull():
+                        position = current._host.mapTo(window, QPoint(0, 0))
+                        painter = QPainter(frame)
+                        painter.drawPixmap(position, native_game)
+                        painter.end()
             frame.save(str(output))
+            window.close()
             app.quit()
 
         def workspace_ready() -> None:

@@ -52,6 +52,7 @@ class CommandAction(StrEnum):
     WORKSPACES = "WORKSPACES"
     UPDATES = "UPDATES"
     DIAGNOSTICS = "DIAGNOSTICS"
+    DOOM = "DOOM"
     PORTFOLIO = "PORTFOLIO"
     ALERTS = "ALERTS"
     HELP = "HELP"
@@ -201,6 +202,7 @@ ALIASES = {
     "DIAG": CommandAction.DIAGNOSTICS,
     "DIAGNOSTIC": CommandAction.DIAGNOSTICS,
     "DIAGNOSTICS": CommandAction.DIAGNOSTICS,
+    "DOOM": CommandAction.DOOM,
     "PORT": CommandAction.PORTFOLIO,
     "PORTFOLIO": CommandAction.PORTFOLIO,
     "ALRT": CommandAction.ALERTS,

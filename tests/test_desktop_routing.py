@@ -130,6 +130,7 @@ def test_workstation_commands_route_to_native_workspaces() -> None:
         "WSP": "workspaces",
         "UPD": "updates",
         "DIAG": "diagnostics",
+        "DOOM": "doom",
         "DQM": "data-quality",
         "DQM AAPL PROBE": "data-quality",
         "AAPL FLDS PRICE": "data-audit",

@@ -497,6 +497,8 @@ class AjaxTerminalApp(App):
             await self._show_news(command)
         elif action == CommandAction.SOCIAL:
             await self.query_one("#social-screen", SocialWorkspace).activate()
+        elif action == CommandAction.DOOM:
+            main.update(render_message("DOOM / FREEDOOM", "Open the desktop edition to run the embedded game."))
         elif action in {CommandAction.OPTIONS, CommandAction.OPTION_VALUATION, CommandAction.VOL}:
             await self._show_options(command)
         elif action == CommandAction.INCOME_STATEMENT:
