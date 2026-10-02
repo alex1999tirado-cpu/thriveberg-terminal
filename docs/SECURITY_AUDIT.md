@@ -1,21 +1,25 @@
 # Security audit - 2026-10-02
 
-Scope: THRIVEBERG Terminal 0.5.0 Beta 018 source tree, packaged application and
+Scope: THRIVEBERG Terminal 0.5.0 Beta 019 source tree, packaged application and
 Windows installer.
 
 ## Results
 
-- `pytest`: 290 passed.
+- `pytest`: 297 passed, with 21 third-party deprecation warnings.
 - `pip-audit`: no known vulnerable installed dependencies.
 - Bandit: no medium- or high-severity findings after hardening.
-- `detect-secrets`: no new findings in the changed source, test or documentation files.
-- Installer SHA-256: `3DB8874CD2A1138F77D5BCF5B999AC7FD0B22D9DF41686F7422FE7CBF79991D0`.
-- Packaged executable SHA-256: `B7B4A921343D20C443110DAB3386CCD886CAFA03810D57FDF125ACD45531C5D1`.
-- Microsoft Defender custom scans: zero detections for the Beta 018 installer
-  and packaged executable.
-- Packaged and installed smoke tests: successful `DIAG` and `UPD` renders at
-  1920x1080. The installed build reports 0.5.0 Beta 018 and all 11 diagnostic
-  checks pass.
+- `detect-secrets`: no unreviewed findings. The public SHA-256 values in the
+  DOOM integrity manifest are recorded as audited false positives.
+- Installer SHA-256: `4E969E567F2970B76C5454543F862B3609FA1AEF3B88CF40219114DF7892436E`.
+- Packaged executable SHA-256: `DCFD548EA2F7F1A8B6E54ECB4BFAB4799134248645D8400F52DD51F200935983`.
+- Microsoft Defender custom scans: zero detections for the Beta 019 installer,
+  installed executable and bundled Chocolate Doom engine.
+- Packaged and installed smoke tests: successful `DIAG` and embedded `DOOM`
+  renders at 1920x1080. The installed build reports 0.5.0 Beta 019 from commit
+  `747f79a06a1a`; the game closes without leaving a residual process.
+- The installer handoff was tested by starting the frozen application while the
+  update marker existed. Startup waited for marker removal and then completed,
+  preventing imports from a partially replaced Qt runtime.
 - The Ed25519 release manifest was verified against the bundled public key. Its
   signed installer name, byte size and SHA-256 all match the generated setup;
   tamper, downgrade, path traversal and interrupted-download cases are covered
@@ -38,13 +42,16 @@ Windows installer.
 - Online updates are accepted only from the public binary repository after an
   Ed25519 signature, exact size and SHA-256 verification. Cached installers are
   revalidated before launch.
+- The bundled Chocolate Doom/Freedoom runtime is validated against a SHA-256
+  manifest before launch. Game configuration and save files remain in the
+  current user's local application-data directory.
 - Supabase anonymous table access and public function execution are revoked;
   authenticated access remains governed by row-level security.
 - CI repeats tests, dependency audit, secret checks, and Bandit on every change.
 
 ## Residual risks
 
-- Beta 018 is not Authenticode signed, so Windows SmartScreen can still warn on
+- Beta 019 is not Authenticode signed, so Windows SmartScreen can still warn on
   the initial installer. The in-app Ed25519 trust root authenticates subsequent
   THRIVEBERG update manifests independently of GitHub transport.
 - Public market-data endpoints can be delayed, rate limited, changed, or
