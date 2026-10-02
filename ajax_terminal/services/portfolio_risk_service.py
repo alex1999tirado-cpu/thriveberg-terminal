@@ -170,9 +170,9 @@ def _base_levels(
     fx_by_currency: Mapping[str, tuple[PriceHistory | None, bool]],
 ) -> tuple[dict[date, float], str]:
     levels = {
-        bar.timestamp.date(): float(bar.close)
+        bar.timestamp.date(): float(bar.adjusted_close or bar.close)
         for bar in history.bars
-        if bar.close > 0
+        if (bar.adjusted_close or bar.close) > 0
     }
     if not levels or currency == base_currency.strip().upper():
         return levels, "OK"

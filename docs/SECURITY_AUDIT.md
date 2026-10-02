@@ -1,22 +1,23 @@
 # Security audit - 2026-10-02
 
-Scope: THRIVEBERG Terminal 0.5.0 Beta 015 source tree, packaged application and
+Scope: THRIVEBERG Terminal 0.5.0 Beta 016 source tree, packaged application and
 Windows installer.
 
 ## Results
 
-- `pytest`: 255 passed.
+- `pytest`: 264 passed.
 - `pip-audit`: no known vulnerable installed dependencies.
 - Bandit: no medium- or high-severity findings after hardening.
 - `detect-secrets`: no new findings in the changed source, test or documentation files.
-- Installer SHA-256: `56956160B0829FA9AA2332D20B3D3C7AA719C1D1509D16F24DC8B6DBC9DD2619`.
-- Packaged executable SHA-256: `65A344875DDF8D8BF1527A965B34E48042E7F596DDEDA6D6BE96F548CB66F3CF`.
-- Microsoft Defender custom scans: zero detections for the Beta 015 installer
+- Installer SHA-256: `ECA70A9D14E368F8FAF5AD5E625F6AEA4BBEE5917B5F65559F5BB2994401B775`.
+- Packaged executable SHA-256: `031854CCA3EC62C1F5EC10BEE6242E9B3D04D5A373C464CCBD31C759D0E85370`.
+- Microsoft Defender custom scans: zero detections for the Beta 016 installer
   and packaged executable.
-- Packaged smoke test: successful `PORT MAIN RISK SPY 1Y` render at 1920x1080
-  using an isolated multi-currency ledger, 247 observed sessions, historical FX
-  conversion and 100% market-value history coverage.
-- Local `UPD` inventory: Beta 015 staged with a verified checksum while Beta 014
+- Packaged smoke test: successful `PORT MAIN ACTIONS REFRESH` and
+  `PORT MAIN ACTIONS APPLY` renders at 1920x1080 using an isolated AAPL ledger.
+  Three observed dividends were applied once for USD 80 total; a second apply
+  produced zero new entries and preserved quantity and cost basis.
+- Local `UPD` inventory: Beta 016 staged with a verified checksum while Beta 015
   remains available.
 
 ## Hardening included
@@ -33,7 +34,7 @@ Windows installer.
 
 ## Residual risks
 
-- Beta 015 is not code signed. SHA-256 verification detects modification but
+- Beta 016 is not code signed. SHA-256 verification detects modification but
   does not establish publisher identity.
 - Public market-data endpoints can be delayed, rate limited, changed, or
   unavailable. Quality labels must remain visible and are not a trading SLA.

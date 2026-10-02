@@ -16,6 +16,8 @@ from ajax_terminal.analytics.fundamentals import return_on_invested_capital
 from ajax_terminal.models.equity import (
     AnalystConsensus,
     CompanyProfile,
+    CorporateAction,
+    CorporateActionType,
     CorporateEvent,
     DividendAnalysis,
     DividendRecord,
@@ -265,6 +267,74 @@ class YahooProvider:
             provider=self.name,
             quality=DataQuality.DELAYED,
         )
+
+    async def corporate_actions(self, symbol: str) -> list[CorporateAction]:
+        yahoo_symbol = _to_yahoo_symbol(symbol)
+        payload = await _fetch_json(
+            "https://query1.finance.yahoo.com/v8/finance/chart/"
+            f"{urllib.parse.quote(yahoo_symbol)}?range=max&interval=1mo&events=div%2Csplits"
+        )
+        result = payload.get("chart", {}).get("result") or []
+        if not result:
+            raise ProviderError(f"Yahoo corporate actions unavailable for {symbol}")
+        data = result[0]
+        currency = str(data.get("meta", {}).get("currency") or "").upper()
+        events = data.get("events", {})
+        actions: list[CorporateAction] = []
+        for node in events.get("dividends", {}).values():
+            effective_date = _date_from_value(node.get("date"))
+            amount = _number(node.get("amount"))
+            if effective_date is None or amount is None or amount <= 0:
+                continue
+            identifier = f"YAHOO:{yahoo_symbol}:DIVIDEND:{effective_date.isoformat()}:{amount:.10g}"
+            actions.append(
+                CorporateAction(
+                    identifier,
+                    symbol.upper(),
+                    CorporateActionType.DIVIDEND,
+                    effective_date,
+                    amount=amount,
+                    currency=currency,
+                    provider=self.name,
+                    quality=DataQuality.DELAYED,
+                )
+            )
+        for node in events.get("splits", {}).values():
+            effective_date = _date_from_value(node.get("date"))
+            numerator = _number(node.get("numerator"))
+            denominator = _number(node.get("denominator"))
+            if numerator is None or denominator in {None, 0}:
+                split_text = str(node.get("splitRatio") or "")
+                match = re.fullmatch(r"\s*([0-9.]+)\s*[:/]\s*([0-9.]+)\s*", split_text)
+                if match:
+                    numerator = _number(match.group(1))
+                    denominator = _number(match.group(2))
+            if (
+                effective_date is None
+                or numerator is None
+                or denominator is None
+                or numerator <= 0
+                or denominator <= 0
+            ):
+                continue
+            identifier = (
+                f"YAHOO:{yahoo_symbol}:SPLIT:{effective_date.isoformat()}:"
+                f"{numerator:.10g}:{denominator:.10g}"
+            )
+            actions.append(
+                CorporateAction(
+                    identifier,
+                    symbol.upper(),
+                    CorporateActionType.SPLIT,
+                    effective_date,
+                    currency=currency,
+                    numerator=numerator,
+                    denominator=denominator,
+                    provider=self.name,
+                    quality=DataQuality.DELAYED,
+                )
+            )
+        return sorted(actions, key=lambda item: (item.effective_date, item.action_type, item.action_id))
 
     async def events(self, symbol: str) -> list[CorporateEvent]:
         data = await self._summary(symbol, "price", "calendarEvents")
@@ -693,6 +763,7 @@ def normalize_yahoo_history(
     lows = indicators.get("low") or []
     closes = indicators.get("close") or []
     volumes = indicators.get("volume") or []
+    adjusted = data.get("indicators", {}).get("adjclose", [{}])[0].get("adjclose") or []
     bars: list[PriceBar] = []
     for index, unix_time in enumerate(timestamps):
         close = _at(closes, index)
@@ -709,6 +780,7 @@ def normalize_yahoo_history(
                 low=float(low),
                 close=float(close),
                 volume=_float_or_none(_at(volumes, index)),
+                adjusted_close=_float_or_none(_at(adjusted, index)),
             )
         )
     if not bars:

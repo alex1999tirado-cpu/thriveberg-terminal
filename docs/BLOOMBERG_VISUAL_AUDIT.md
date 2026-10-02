@@ -46,6 +46,21 @@ is introduced without a reviewed screen family.
 - Visual validation covered all four views using three live-listed positions,
   including historical EUR/USD conversion for a European security.
 
+## 2026-10-02 Corporate Actions Pass
+
+- `PORT` adds a tenth flat native view for observed dividends and splits, with
+  explicit entitlement, event terms, native/base values, position delta, source,
+  quality, control status and methodology columns.
+- `SYNC OBSERVED` never mutates the ledger. `APPLY ELIGIBLE` writes only reviewed
+  candidates and disables itself when no eligible event remains.
+- Dividend application is idempotent and uses an observed event-date FX close.
+  Same-day manual dividends are held for review instead of being duplicated.
+- Split application restates the dated transaction ledger, current quantity,
+  average native/base cost and later realized P&L. Unreconciled positions remain
+  in `REVIEW` and are not changed.
+- Visual validation covered preview and applied states at 1920 x 1080 with real
+  Yahoo Finance dividend events and an isolated portfolio database.
+
 ## 2026-09-28 Quality Pass
 
 - `HOME` now opens the working multi-asset monitor after login instead of an
@@ -112,7 +127,7 @@ is introduced without a reviewed screen family.
 | TEN_Q | 10-Q filing | Fundamentals | Reviewed |
 | EXPORT | XLS | Fundamentals | Reviewed |
 | SCREENER | EQS | Fundamentals | Reviewed |
-| PORTFOLIO | PORT | Portfolio accounting / risk | Reviewed; nine-view native ledger and risk workstation |
+| PORTFOLIO | PORT | Portfolio accounting / risk / corporate actions | Reviewed; ten-view native ledger, risk and corporate-action workstation |
 | DATA_QUALITY | DQM / data diagnostics | Support | Reviewed; native four-view monitor |
 | CHART | GP | Price chart | Rebuilt with Lightweight Charts |
 | RISK | GP analytics view | Price chart | Fixed; now routes to live chart |

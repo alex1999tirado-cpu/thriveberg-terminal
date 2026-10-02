@@ -24,7 +24,11 @@ class MarketStatistics:
 
 
 def calculate_market_statistics(history: PriceHistory) -> MarketStatistics:
-    prices = [bar.close for bar in history.bars if bar.close > 0]
+    prices = [
+        float(bar.adjusted_close or bar.close)
+        for bar in history.bars
+        if (bar.adjusted_close or bar.close) > 0
+    ]
     returns = returns_from_prices(prices)
     volumes = [bar.volume for bar in history.bars[-20:] if bar.volume is not None]
     period_return = prices[-1] / prices[0] - 1.0 if len(prices) >= 2 and prices[0] else None
@@ -58,6 +62,7 @@ def horizon_returns(history: PriceHistory) -> dict[str, float | None]:
     for label, delta in horizons.items():
         cutoff = latest.timestamp - delta
         candidates = [bar for bar in history.bars if bar.timestamp <= cutoff]
-        base = candidates[-1].close if candidates else None
-        result[label] = latest.close / base - 1.0 if base and latest.close else None
+        base = (candidates[-1].adjusted_close or candidates[-1].close) if candidates else None
+        latest_value = latest.adjusted_close or latest.close
+        result[label] = latest_value / base - 1.0 if base and latest_value else None
     return result

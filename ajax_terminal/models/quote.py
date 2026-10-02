@@ -47,6 +47,7 @@ class PriceBar:
     low: float
     close: float
     volume: float | None = None
+    adjusted_close: float | None = None
 
 
 @dataclass(slots=True)

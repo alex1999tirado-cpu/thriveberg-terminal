@@ -1,5 +1,5 @@
 #ifndef BetaVersion
-  #define BetaVersion "016"
+  #define BetaVersion "017"
 #endif
 #ifndef AppVersion
   #define AppVersion "0.5.0"

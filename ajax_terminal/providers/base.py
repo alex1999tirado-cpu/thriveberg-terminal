@@ -7,6 +7,7 @@ from typing import Generic, Protocol, TypeVar
 from ajax_terminal.models.equity import (
     AnalystConsensus,
     CompanyProfile,
+    CorporateAction,
     CorporateEvent,
     DividendAnalysis,
     EstimateSet,
@@ -117,6 +118,13 @@ class EventsProvider(Protocol):
     name: str
 
     async def events(self, symbol: str) -> list[CorporateEvent]:
+        ...
+
+
+class CorporateActionsProvider(Protocol):
+    name: str
+
+    async def corporate_actions(self, symbol: str) -> list[CorporateAction]:
         ...
 
 

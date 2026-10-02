@@ -87,6 +87,21 @@ factor exposures and stress P&L. Factor loadings use observed liquid proxies
 are labelled `OBSERVED`; linear factor, FX and concentration shocks carry an
 `ESTIMATED*` marker and display their methodology.
 
+### Corporate actions and ledger adjustments
+
+![THRIVEBERG observed portfolio corporate actions](screenshots/portfolio-corporate-actions.png)
+
+`PORT <portfolio> ACTIONS` reconciles observed Yahoo Finance dividends and
+splits against dated portfolio transactions. The preview shows entitlement,
+native cash, event-date FX, base-currency value, position delta, provider,
+quality and control status before any write. `APPLY ELIGIBLE` is idempotent:
+dividends enter the cash ledger once, while splits restate quantities, average
+cost and any later realized P&L without changing the book value at the split
+date. Existing same-day manual dividends and unreconciled positions are held for
+review. Yahoo chart events do not reliably provide payment dates, so eligible
+dividends are explicitly booked on ex-date; unsupported spin-offs, rights issues
+and cash-in-lieu terms are never inferred.
+
 THRIVEBERG is a research and market-monitoring workstation. It does not route
 orders, hold client money, or provide investment advice. Every data view carries
 its provider and quality state; unavailable observations remain unavailable.
@@ -112,7 +127,7 @@ its provider and quality state; unavailable observations remain unavailable.
 - Equity research functions for financial analysis, estimates, recommendations, relative valuation, dividends, corporate events, and screening.
 - Native PySide6 chart workstations: TradingView Lightweight Charts for `GP`, Apache ECharts for analytical 2D views, and PyVista/VTK for the interactive `OVDV` volatility surface.
 - Persistent SQLite cache and watchlist storage.
-- Native workstation tools: editable named watchlists (`WATC`); multi-currency portfolio accounting, performance attribution, broker CSV import, historical risk, factor exposure, correlation and stress testing (`PORT`); market alerts (`ALRT`); saved multi-factor screens (`EQS`); and a paged corporate calendar (`EVT ALL`) with watchlist, portfolio, market-cap, industry and geographic filters. Global provider and cache diagnostics (`DQM`), field-level source audit (`FLDS`), persistent workspaces (`WSP`), crash recovery, and a checksum-verified local beta manager (`UPD`) are also included.
+- Native workstation tools: editable named watchlists (`WATC`); multi-currency portfolio accounting, performance attribution, broker CSV import, historical risk, factor exposure, correlation, stress testing and audited corporate-action adjustments (`PORT`); market alerts (`ALRT`); saved multi-factor screens (`EQS`); and a paged corporate calendar (`EVT ALL`) with watchlist, portfolio, market-cap, industry and geographic filters. Global provider and cache diagnostics (`DQM`), field-level source audit (`FLDS`), persistent workspaces (`WSP`), crash recovery, and a checksum-verified local beta manager (`UPD`) are also included.
 - Decoupled provider interfaces with cached fallback and explicit unavailable or estimated labels; fictitious market observations are not presented as real data.
 - Analytics for FX forwards, fixed income, Black-Scholes options, volatility, and risk.
 - Supabase-backed user accounts, friend requests, private messages, clickable THRIVEBERG command links, and self-contained friend ZIP export.
@@ -161,7 +176,7 @@ thriveberg
 The current beta is distributed as a per-user Windows installer:
 
 ```text
-releases\BETA\THRIVEBERG-Terminal-BETA-015-Setup.exe
+releases\BETA\THRIVEBERG-Terminal-BETA-016-Setup.exe
 ```
 
 It installs THRIVEBERG Terminal under `%LOCALAPPDATA%\Programs`, creates the
@@ -175,13 +190,13 @@ Build the next installer after changing the source with:
 .\build_installer.ps1
 ```
 
-The default build number is `016`, so the preserved Beta 015 installer is never
+The default build number is `017`, so the preserved Beta 016 installer is never
 overwritten accidentally. Pass `-BetaVersion` explicitly for later releases.
 
 The build uses PyInstaller's one-directory layout internally and Inno Setup for
 installation and upgrades. See [`installer/README.md`](installer/README.md).
 Release executables and checksums are intentionally excluded from Git history;
-publish them as GitHub Release assets instead. Beta 015 is not currently code
+publish them as GitHub Release assets instead. Beta 016 is not currently code
 signed, so recipients should verify the accompanying SHA-256 checksum before
 running it and may still see a Microsoft SmartScreen warning.
 
@@ -193,11 +208,11 @@ running it and may still see a Microsoft SmartScreen warning.
   also enforce hostname allowlists.
 - Supabase access is constrained by Auth and row-level security. The bundled
   key is publishable and has no administrative privileges.
-- CI runs 255 tests, `pip-audit`, `detect-secrets`, and Bandit for every change.
+- CI runs 264 tests, `pip-audit`, `detect-secrets`, and Bandit for every change.
 
 See [SECURITY.md](SECURITY.md) for vulnerability reporting and
 [the latest audit](docs/SECURITY_AUDIT.md) for verified results and residual
-risks. Beta 015 is not code signed, so its SHA-256 protects integrity but does
+risks. Beta 016 is not code signed, so its SHA-256 protects integrity but does
 not establish publisher identity.
 
 ## API Configuration
@@ -325,6 +340,7 @@ WATC ADD SAN.MC EUROPE
 PORT
 PORT ADD AAPL 10 185 USD
 PORT MAIN RISK SPY 1Y
+PORT MAIN ACTIONS
 ALRT
 ALRT ADD AAPL PRICE > 250
 AAPL FLDS REVENUE
@@ -495,7 +511,7 @@ Development advances one validated beta milestone at a time:
 1. Data quality, provider health, cache coverage, source comparison and field provenance. Completed in the Beta 013 development cycle.
 2. Professional portfolio accounting, performance attribution and broker CSV imports. Completed in the Beta 014 development cycle.
 3. Portfolio risk, factor exposure, correlation and stress scenarios. Completed in the Beta 015 development cycle.
-4. Corporate actions and automatic position/history adjustments.
+4. Corporate actions and automatic position/history adjustments. Completed in the Beta 016 development cycle.
 5. Background alerts for prices, fundamentals, filings, news, events and portfolio risk.
 6. Signed incremental updates, diagnostics and encrypted configuration migration.
 7. Estimate revisions, earnings surprises, guidance and filing comparison.

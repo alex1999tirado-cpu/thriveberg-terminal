@@ -16,6 +16,12 @@ from ajax_terminal.models.instrument import AssetClass
 from ajax_terminal.models.quote import DataQuality, Quote, StatementType
 from ajax_terminal.services.equity_research_service import EquityResearchService
 from ajax_terminal.services.market_service import MarketService
+from ajax_terminal.services.corporate_actions_service import (
+    CorporateActionApplyResult,
+    PortfolioCorporateActionsLoad,
+    apply_eligible_corporate_actions,
+    load_portfolio_corporate_actions,
+)
 from ajax_terminal.services.portfolio_risk_service import (
     PortfolioRiskPosition,
     load_portfolio_risk,
@@ -146,6 +152,8 @@ class PortfolioLoad:
     risk: PortfolioRiskReport | None = None
     risk_benchmark: str = "SPY"
     risk_period: str = "1Y"
+    corporate_actions: PortfolioCorporateActionsLoad | None = None
+    corporate_action_result: CorporateActionApplyResult | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -352,6 +360,12 @@ def load_portfolio(args: Iterable[str], store: PortfolioStore | None = None) -> 
     portfolios = store or PortfolioStore()
     tokens = [str(item).strip().upper() for item in args if str(item).strip()]
     risk_requested = "RISK" in tokens
+    actions_requested = "ACTIONS" in tokens
+    if risk_requested and actions_requested:
+        actions_requested = tokens.index("ACTIONS") < tokens.index("RISK")
+        risk_requested = not actions_requested
+    actions_apply = False
+    actions_refresh = False
     risk_benchmark = "SPY"
     risk_period = "1Y"
     if risk_requested:
@@ -362,6 +376,12 @@ def load_portfolio(args: Iterable[str], store: PortfolioStore | None = None) -> 
             risk_benchmark = risk_options[0]
         if len(risk_options) >= 2:
             risk_period = risk_options[1]
+    if actions_requested:
+        actions_index = tokens.index("ACTIONS")
+        action_options = tokens[actions_index + 1:]
+        tokens = tokens[:actions_index]
+        actions_apply = "APPLY" in action_options
+        actions_refresh = "REFRESH" in action_options
     name = "MAIN"
     if tokens:
         action = tokens[0]
@@ -399,6 +419,20 @@ def load_portfolio(args: Iterable[str], store: PortfolioStore | None = None) -> 
     if name not in names:
         name = portfolios.create(name)
         names = portfolios.names()
+    corporate_actions = None
+    corporate_action_result = None
+    if actions_requested:
+        corporate_actions = load_portfolio_corporate_actions(
+            portfolios,
+            name,
+            refresh=actions_refresh,
+        )
+        if actions_apply:
+            corporate_action_result = apply_eligible_corporate_actions(
+                portfolios,
+                corporate_actions,
+            )
+            corporate_actions = load_portfolio_corporate_actions(portfolios, name)
     positions = portfolios.positions(name)
     base_currency = portfolios.base_currency(name)
 
@@ -569,6 +603,8 @@ def load_portfolio(args: Iterable[str], store: PortfolioStore | None = None) -> 
         risk,
         risk_benchmark,
         risk_period,
+        corporate_actions,
+        corporate_action_result,
     )
 
 

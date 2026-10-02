@@ -285,7 +285,7 @@ def test_portfolio_workspace_exposes_accounting_and_import_tabs(tmp_path) -> Non
     tabs = workspace.findChild(QTabWidget)
 
     assert tabs is not None
-    assert tabs.count() == 9
+    assert tabs.count() == 10
     assert [tabs.tabText(index) for index in range(tabs.count())] == [
         "1) HOLDINGS",
         "2) ATTRIBUTION",
@@ -296,6 +296,7 @@ def test_portfolio_workspace_exposes_accounting_and_import_tabs(tmp_path) -> Non
         "7) FACTORS",
         "8) CORRELATION",
         "9) STRESS",
+        "10) CORP ACTIONS",
     ]
     assert tabs.currentIndex() == 4
     assert workspace.apply_import_button.isEnabled()
@@ -312,6 +313,8 @@ def test_portfolio_workspace_exposes_accounting_and_import_tabs(tmp_path) -> Non
     workspace.risk_period.setCurrentText("2Y")
     workspace._calculate_risk()
     assert commands[-1] == "PORT MAIN RISK ACWI 2Y"
+    workspace._sync_actions()
+    assert commands[-1] == "PORT MAIN ACTIONS REFRESH"
     workspace.close()
     app.processEvents()
 
@@ -353,3 +356,22 @@ def test_named_portfolio_risk_request_preserves_benchmark_and_period(tmp_path, m
     assert captured["base_currency"] == "EUR"
     positions = captured["positions"]
     assert positions[0].symbol == "ASML.AS"
+
+
+def test_named_portfolio_actions_request_preserves_name_and_mode(tmp_path, monkeypatch) -> None:
+    store = PortfolioStore(tmp_path / "portfolio.sqlite3")
+    store.create("EURO FUND", "EUR")
+    captured: list[tuple[str, bool]] = []
+    sentinel = object()
+
+    def actions(_store, name, *, refresh=False):
+        captured.append((name, refresh))
+        return sentinel
+
+    monkeypatch.setattr(workstation_service, "load_portfolio_corporate_actions", actions)
+
+    model = load_portfolio(("EURO", "FUND", "ACTIONS", "REFRESH"), store)
+
+    assert model.name == "EURO FUND"
+    assert model.corporate_actions is sentinel
+    assert captured == [("EURO FUND", True)]

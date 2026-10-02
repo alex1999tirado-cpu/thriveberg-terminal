@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
+from enum import StrEnum
 
 from ajax_terminal.models.quote import DataQuality, FinancialPeriod, StatementType
 
@@ -121,6 +122,32 @@ class DividendAnalysis:
     provider: str = "UNKNOWN"
     quality: DataQuality = DataQuality.UNAVAILABLE
     timestamp: datetime = field(default_factory=_now)
+
+
+class CorporateActionType(StrEnum):
+    DIVIDEND = "DIVIDEND"
+    SPLIT = "SPLIT"
+
+
+@dataclass(slots=True)
+class CorporateAction:
+    action_id: str
+    symbol: str
+    action_type: CorporateActionType
+    effective_date: date
+    amount: float | None = None
+    currency: str = ""
+    numerator: float | None = None
+    denominator: float | None = None
+    provider: str = "UNKNOWN"
+    quality: DataQuality = DataQuality.UNAVAILABLE
+    timestamp: datetime = field(default_factory=_now)
+
+    @property
+    def split_ratio(self) -> float | None:
+        if self.numerator is None or self.denominator in {None, 0}:
+            return None
+        return self.numerator / self.denominator
 
 
 @dataclass(slots=True)

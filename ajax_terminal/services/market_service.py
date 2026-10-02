@@ -9,6 +9,7 @@ from typing import Any
 from ajax_terminal.analytics.fixed_income import bootstrap_zero_rates
 from ajax_terminal.instruments import INSTRUMENT_REGISTRY, InstrumentRegistry
 from ajax_terminal.models.fixed_income import CreditBenchmark
+from ajax_terminal.models.equity import CorporateAction, CorporateActionType
 from ajax_terminal.models.instrument import AssetClass
 from ajax_terminal.models.quote import (
     Curve,
@@ -46,6 +47,7 @@ class MarketService:
     FUNDAMENTALS_TTL = 24 * 3600
     STATEMENTS_TTL = 24 * 3600
     HISTORY_TTL = 15 * 60
+    CORPORATE_ACTIONS_TTL = 12 * 3600
 
     def __init__(
         self,
@@ -348,6 +350,49 @@ class MarketService:
             quality=DataQuality.UNAVAILABLE,
         )
 
+    async def corporate_actions(
+        self,
+        symbol: str,
+        *,
+        refresh: bool = False,
+    ) -> list[CorporateAction]:
+        clean = self.registry.resolve(symbol).symbol
+        key = f"corporate-actions:{clean}"
+        if not refresh:
+            cached = self.cache.get_json(key)
+            if isinstance(cached, list):
+                return [_corporate_action_from_dict(item, cached_quality=False) for item in cached]
+        for provider in self.market_providers:
+            if not hasattr(provider, "corporate_actions"):
+                continue
+            try:
+                actions = await provider.corporate_actions(clean)
+                if any(item.quality == DataQuality.MOCK for item in actions):
+                    continue
+                self.cache.set_json(
+                    key,
+                    [_corporate_action_to_dict(item) for item in actions],
+                    self.CORPORATE_ACTIONS_TTL,
+                )
+                LOGGER.info(
+                    "corporate actions provider=%s symbol=%s actions=%s",
+                    getattr(provider, "name", "?"),
+                    clean,
+                    len(actions),
+                )
+                return actions
+            except Exception as exc:
+                LOGGER.warning(
+                    "corporate actions fallback provider=%s symbol=%s error=%s",
+                    getattr(provider, "name", "?"),
+                    clean,
+                    exc,
+                )
+        stale = self.cache.get_stale_json(key)
+        if isinstance(stale, list):
+            return [_corporate_action_from_dict(item, cached_quality=True) for item in stale]
+        return []
+
     async def credit_benchmark(self, symbol: str) -> CreditBenchmark:
         clean = self.registry.resolve(symbol).symbol
         instrument = self.registry.get(clean)
@@ -640,6 +685,7 @@ def _history_to_dict(history: PriceHistory) -> dict[str, Any]:
                 "low": bar.low,
                 "close": bar.close,
                 "volume": bar.volume,
+                "adjusted_close": bar.adjusted_close,
             }
             for bar in history.bars
         ],
@@ -659,6 +705,11 @@ def _history_from_dict(data: dict[str, Any], cached_quality: bool) -> PriceHisto
             low=float(bar["low"]),
             close=float(bar["close"]),
             volume=float(bar["volume"]) if bar.get("volume") is not None else None,
+            adjusted_close=(
+                float(bar["adjusted_close"])
+                if bar.get("adjusted_close") is not None
+                else None
+            ),
         )
         for bar in data.get("bars", [])
     ]
@@ -671,6 +722,41 @@ def _history_from_dict(data: dict[str, Any], cached_quality: bool) -> PriceHisto
         currency=data.get("currency", ""),
         provider=data.get("provider", "UNKNOWN"),
         quality=quality,
+        timestamp=_parse_datetime(data.get("timestamp")),
+    )
+
+
+def _corporate_action_to_dict(action: CorporateAction) -> dict[str, Any]:
+    return {
+        "action_id": action.action_id,
+        "symbol": action.symbol,
+        "action_type": str(action.action_type),
+        "effective_date": action.effective_date.isoformat(),
+        "amount": action.amount,
+        "currency": action.currency,
+        "numerator": action.numerator,
+        "denominator": action.denominator,
+        "provider": action.provider,
+        "quality": str(action.quality),
+        "timestamp": action.timestamp.isoformat(),
+    }
+
+
+def _corporate_action_from_dict(
+    data: dict[str, Any],
+    cached_quality: bool,
+) -> CorporateAction:
+    return CorporateAction(
+        action_id=str(data.get("action_id") or ""),
+        symbol=str(data.get("symbol") or ""),
+        action_type=CorporateActionType(str(data.get("action_type") or "DIVIDEND")),
+        effective_date=date.fromisoformat(str(data.get("effective_date"))),
+        amount=float(data["amount"]) if data.get("amount") is not None else None,
+        currency=str(data.get("currency") or ""),
+        numerator=float(data["numerator"]) if data.get("numerator") is not None else None,
+        denominator=float(data["denominator"]) if data.get("denominator") is not None else None,
+        provider=str(data.get("provider") or "UNKNOWN"),
+        quality=_cached_quality(data.get("quality"), cached_quality),
         timestamp=_parse_datetime(data.get("timestamp")),
     )
 

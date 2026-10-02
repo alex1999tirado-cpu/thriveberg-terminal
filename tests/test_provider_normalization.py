@@ -60,7 +60,8 @@ def test_yahoo_history_normalization_skips_empty_bars() -> None:
                                 "close": [101.0, None, 103.0],
                                 "volume": [1_000_000, None, 1_200_000],
                             }
-                        ]
+                        ],
+                        "adjclose": [{"adjclose": [100.5, None, 102.5]}],
                     },
                 }
             ],
@@ -73,8 +74,46 @@ def test_yahoo_history_normalization_skips_empty_bars() -> None:
     assert history.symbol == "AAPL"
     assert len(history.bars) == 2
     assert history.bars[-1].close == 103.0
+    assert history.bars[-1].adjusted_close == 102.5
     assert history.bars[-1].volume == 1_200_000
     assert history.quality == DataQuality.DELAYED
+
+
+def test_yahoo_corporate_actions_normalize_dividends_and_splits(monkeypatch) -> None:
+    async def fetch(_url: str, **_kwargs):
+        return {
+            "chart": {
+                "result": [
+                    {
+                        "meta": {"currency": "USD"},
+                        "events": {
+                            "dividends": {
+                                "one": {"date": 1_735_689_600, "amount": 0.25},
+                            },
+                            "splits": {
+                                "two": {
+                                    "date": 1_738_281_600,
+                                    "numerator": 4.0,
+                                    "denominator": 1.0,
+                                    "splitRatio": "4:1",
+                                }
+                            },
+                        },
+                    }
+                ],
+                "error": None,
+            }
+        }
+
+    monkeypatch.setattr("ajax_terminal.providers.yahoo._fetch_json", fetch)
+
+    actions = asyncio.run(YahooProvider().corporate_actions("AAPL"))
+
+    assert [str(item.action_type) for item in actions] == ["DIVIDEND", "SPLIT"]
+    assert actions[0].amount == 0.25
+    assert actions[0].currency == "USD"
+    assert actions[1].split_ratio == 4.0
+    assert actions[0].action_id.startswith("YAHOO:AAPL:DIVIDEND:")
 
 
 def test_yahoo_financial_statement_normalization() -> None:

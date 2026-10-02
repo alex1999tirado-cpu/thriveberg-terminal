@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
 from ajax_terminal.analytics.market_stats import calculate_market_statistics, horizon_returns
 from ajax_terminal.models.quote import DataQuality, PriceBar, PriceHistory
 
@@ -33,3 +35,29 @@ def test_market_statistics_and_horizon_returns() -> None:
     assert returns["1W"] is not None and returns["1W"] > 0
     assert returns["1M"] is not None and returns["1M"] > 0
     assert returns["1Y"] is None
+
+
+def test_market_return_statistics_use_adjusted_close_across_a_split() -> None:
+    start = datetime(2025, 1, 1, tzinfo=timezone.utc)
+    history = PriceHistory(
+        "TEST",
+        "1Y",
+        "1d",
+        [
+            PriceBar(start, 1_000, 1_010, 990, 1_000, adjusted_close=100),
+            PriceBar(
+                start + timedelta(days=8),
+                101, 102, 100, 101,
+                adjusted_close=101,
+            ),
+        ],
+        "USD",
+        "TEST",
+        DataQuality.DELAYED,
+    )
+
+    stats = calculate_market_statistics(history)
+    horizons = horizon_returns(history)
+
+    assert stats.period_return == pytest.approx(0.01)
+    assert horizons["1W"] == pytest.approx(0.01)

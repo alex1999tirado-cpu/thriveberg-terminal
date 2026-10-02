@@ -153,6 +153,30 @@ class PortfolioCashFlow:
     created_at: str = ""
 
 
+@dataclass(frozen=True, slots=True)
+class PortfolioCorporateAction:
+    id: int | None
+    portfolio: str
+    action_id: str
+    symbol: str
+    action_type: str
+    effective_date: str
+    amount: float | None
+    currency: str
+    numerator: float | None
+    denominator: float | None
+    eligible_quantity: float
+    position_delta: float
+    cash_amount: float
+    fx_rate: float
+    provider: str
+    quality: str
+    status: str
+    notes: str = ""
+    applied_at: str = ""
+    created_at: str = ""
+
+
 class PortfolioStore:
     SIDES = {"BUY", "SELL"}
     CASH_KINDS = {
@@ -291,6 +315,166 @@ class PortfolioStore:
                 (clean, max(1, min(int(limit), 10_000))),
             ).fetchall()
         return [self._cash_flow_from_row(row) for row in rows]
+
+    def corporate_actions(
+        self,
+        name: str = "MAIN",
+        *,
+        limit: int = 2_000,
+    ) -> list[PortfolioCorporateAction]:
+        clean = self.create(name)
+        with get_connection(self.path) as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM portfolio_corporate_actions
+                WHERE portfolio = ?
+                ORDER BY effective_date DESC, id DESC
+                LIMIT ?
+                """,
+                (clean, max(1, min(int(limit), 10_000))),
+            ).fetchall()
+        return [self._corporate_action_from_row(row) for row in rows]
+
+    def apply_corporate_action(
+        self,
+        *,
+        action_id: str,
+        symbol: str,
+        action_type: str,
+        effective_date: str | date | datetime,
+        eligible_quantity: float,
+        amount: float | None = None,
+        currency: str = "",
+        numerator: float | None = None,
+        denominator: float | None = None,
+        fx_rate: float = 1.0,
+        provider: str = "UNKNOWN",
+        quality: str = "UNAVAILABLE",
+        name: str = "MAIN",
+        notes: str = "",
+    ) -> PortfolioCorporateAction:
+        clean_name = self.create(name)
+        clean_id = " ".join(str(action_id).split())[:200]
+        clean_symbol = symbol.strip().upper()[:32]
+        clean_type = action_type.strip().upper()
+        observed_date = _iso_date(effective_date)
+        quantity = float(eligible_quantity)
+        rate = float(fx_rate)
+        clean_currency = currency.strip().upper()[:8] or self.base_currency(clean_name)
+        if not clean_id or not clean_symbol:
+            raise ValueError("Corporate action ID and symbol are required")
+        if clean_type not in {"DIVIDEND", "SPLIT"}:
+            raise ValueError(f"Unsupported corporate action type: {clean_type}")
+        if date.fromisoformat(observed_date) > datetime.now(timezone.utc).date():
+            raise ValueError("Future corporate actions cannot be applied")
+        if not math.isfinite(quantity) or quantity <= 0:
+            raise ValueError("Eligible quantity must be a positive finite number")
+        if not math.isfinite(rate) or rate <= 0:
+            raise ValueError("FX rate must be a positive finite number")
+        now = _now()
+        with get_connection(self.path) as connection:
+            duplicate = connection.execute(
+                """
+                SELECT * FROM portfolio_corporate_actions
+                WHERE portfolio = ? AND action_id = ?
+                """,
+                (clean_name, clean_id),
+            ).fetchone()
+            if duplicate is not None:
+                return self._corporate_action_from_row(duplicate)
+
+            position_delta = 0.0
+            cash_amount = 0.0
+            detail = " ".join(notes.split())[:240]
+            if clean_type == "DIVIDEND":
+                amount_value = float(amount) if amount is not None else 0.0
+                if not math.isfinite(amount_value) or amount_value <= 0:
+                    raise ValueError("Dividend amount must be a positive finite number")
+                cash_amount = quantity * amount_value
+                connection.execute(
+                    """
+                    INSERT INTO portfolio_cash_flows (
+                        portfolio, flow_date, kind, amount, currency, fx_rate, symbol,
+                        external_id, source, notes, created_at
+                    ) VALUES (?, ?, 'DIVIDEND', ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        clean_name,
+                        observed_date,
+                        cash_amount,
+                        clean_currency,
+                        rate,
+                        clean_symbol,
+                        f"CORP:{clean_id}"[:160],
+                        "CORPORATE ACTION",
+                        detail or "Observed dividend booked on ex-date; payment date unavailable",
+                        now,
+                    ),
+                )
+            else:
+                numerator_value = float(numerator) if numerator is not None else 0.0
+                denominator_value = float(denominator) if denominator is not None else 0.0
+                if (
+                    not math.isfinite(numerator_value)
+                    or not math.isfinite(denominator_value)
+                    or numerator_value <= 0
+                    or denominator_value <= 0
+                ):
+                    raise ValueError("Split numerator and denominator must be positive")
+                ratio = numerator_value / denominator_value
+                if math.isclose(ratio, 1.0, rel_tol=0.0, abs_tol=1e-12):
+                    raise ValueError("A 1:1 split has no accounting effect")
+                position_delta = quantity * (ratio - 1.0)
+                _restate_symbol_for_split(
+                    connection,
+                    clean_name,
+                    clean_symbol,
+                    observed_date,
+                    ratio,
+                    clean_currency,
+                    now,
+                )
+
+            cursor = connection.execute(
+                """
+                INSERT INTO portfolio_corporate_actions (
+                    portfolio, action_id, symbol, action_type, effective_date,
+                    amount, currency, numerator, denominator, eligible_quantity,
+                    position_delta, cash_amount, fx_rate, provider, quality,
+                    status, notes, applied_at, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'APPLIED', ?, ?, ?)
+                """,
+                (
+                    clean_name,
+                    clean_id,
+                    clean_symbol,
+                    clean_type,
+                    observed_date,
+                    float(amount) if amount is not None else None,
+                    clean_currency,
+                    float(numerator) if numerator is not None else None,
+                    float(denominator) if denominator is not None else None,
+                    quantity,
+                    position_delta,
+                    cash_amount,
+                    rate,
+                    " ".join(provider.split())[:80] or "UNKNOWN",
+                    quality.strip().upper()[:24] or "UNAVAILABLE",
+                    detail,
+                    now,
+                    now,
+                ),
+            )
+            connection.execute(
+                "UPDATE portfolio_meta SET updated_at = ? WHERE name = ?",
+                (now, clean_name),
+            )
+            applied = connection.execute(
+                "SELECT * FROM portfolio_corporate_actions WHERE id = ?",
+                (cursor.lastrowid,),
+            ).fetchone()
+            connection.commit()
+        return self._corporate_action_from_row(applied)
 
     def has_external_id(self, name: str, source: str, external_id: str) -> bool:
         clean_name = self.create(name)
@@ -634,6 +818,31 @@ class PortfolioStore:
             str(row["created_at"]),
         )
 
+    @staticmethod
+    def _corporate_action_from_row(row) -> PortfolioCorporateAction:
+        return PortfolioCorporateAction(
+            int(row["id"]),
+            str(row["portfolio"]),
+            str(row["action_id"]),
+            str(row["symbol"]),
+            str(row["action_type"]),
+            str(row["effective_date"]),
+            float(row["amount"]) if row["amount"] is not None else None,
+            str(row["currency"]),
+            float(row["numerator"]) if row["numerator"] is not None else None,
+            float(row["denominator"]) if row["denominator"] is not None else None,
+            float(row["eligible_quantity"]),
+            float(row["position_delta"]),
+            float(row["cash_amount"]),
+            float(row["fx_rate"]),
+            str(row["provider"]),
+            str(row["quality"]),
+            str(row["status"]),
+            str(row["notes"]),
+            str(row["applied_at"]),
+            str(row["created_at"]),
+        )
+
     def remove(self, symbol: str, name: str = "MAIN") -> None:
         clean_name = _name(name, default="MAIN")
         with get_connection(self.path) as connection:
@@ -649,6 +858,7 @@ class PortfolioStore:
             connection.execute("DELETE FROM portfolio_positions WHERE portfolio = ?", (clean,))
             connection.execute("DELETE FROM portfolio_transactions WHERE portfolio = ?", (clean,))
             connection.execute("DELETE FROM portfolio_cash_flows WHERE portfolio = ?", (clean,))
+            connection.execute("DELETE FROM portfolio_corporate_actions WHERE portfolio = ?", (clean,))
             connection.execute("DELETE FROM portfolio_meta WHERE name = ?", (clean,))
             connection.commit()
         if clean == "MAIN":
@@ -671,6 +881,144 @@ def _iso_date(value: str | date | datetime | None) -> str:
 
 def _source(value: str) -> str:
     return " ".join((value.strip().upper() or "MANUAL").split())[:64]
+
+
+def _restate_symbol_for_split(
+    connection,
+    portfolio: str,
+    symbol: str,
+    effective_date: str,
+    ratio: float,
+    currency: str,
+    updated_at: str,
+) -> None:
+    transactions = connection.execute(
+        """
+        SELECT * FROM portfolio_transactions
+        WHERE portfolio = ? AND symbol = ?
+        ORDER BY trade_date, id
+        """,
+        (portfolio, symbol),
+    ).fetchall()
+    if not transactions:
+        raise ValueError(f"No transaction history for {symbol}")
+    prior_splits = connection.execute(
+        """
+        SELECT effective_date, numerator, denominator, id
+        FROM portfolio_corporate_actions
+        WHERE portfolio = ? AND symbol = ? AND action_type = 'SPLIT'
+          AND status = 'APPLIED'
+        ORDER BY effective_date, id
+        """,
+        (portfolio, symbol),
+    ).fetchall()
+    events: list[tuple[str, int, int, object]] = [
+        (str(row["effective_date"]), 0, int(row["id"]), float(row["numerator"]) / float(row["denominator"]))
+        for row in prior_splits
+        if row["numerator"] is not None
+        and row["denominator"] is not None
+        and float(row["denominator"]) > 0
+    ]
+    events.append((effective_date, 0, 2_147_483_647, ratio))
+    events.extend(
+        (str(row["trade_date"]), 1, int(row["id"]), row)
+        for row in transactions
+    )
+
+    quantity = 0.0
+    native_cost = 0.0
+    base_cost = 0.0
+    last_currency = currency
+    for _observed, kind, _identifier, value in sorted(
+        events,
+        key=lambda item: (item[0], item[1], item[2]),
+    ):
+        if kind == 0:
+            split_ratio = float(value)
+            if split_ratio <= 0:
+                raise ValueError("Applied split history contains an invalid ratio")
+            quantity *= split_ratio
+            if quantity > 1e-12:
+                native_cost /= split_ratio
+                base_cost /= split_ratio
+            continue
+        row = value
+        trade_quantity = float(row["quantity"])
+        price = float(row["price"])
+        fees = float(row["fees"])
+        fx_rate = float(row["fx_rate"])
+        last_currency = str(row["currency"] or last_currency)
+        if row["side"] == "BUY":
+            new_quantity = quantity + trade_quantity
+            native_book = quantity * native_cost + trade_quantity * price + fees
+            base_book = quantity * base_cost + (trade_quantity * price + fees) * fx_rate
+            quantity = new_quantity
+            native_cost = native_book / quantity
+            base_cost = base_book / quantity
+            continue
+        if trade_quantity > quantity + 1e-7:
+            raise ValueError(
+                f"Split-adjusted ledger oversells {symbol} on {row['trade_date']}"
+            )
+        realized = (trade_quantity * price - fees) * fx_rate - trade_quantity * base_cost
+        connection.execute(
+            "UPDATE portfolio_transactions SET realized_pnl = ? WHERE id = ?",
+            (realized, int(row["id"])),
+        )
+        quantity = max(0.0, quantity - trade_quantity)
+        if quantity <= 1e-9:
+            quantity = 0.0
+            native_cost = 0.0
+            base_cost = 0.0
+
+    current = connection.execute(
+        """
+        SELECT position FROM portfolio_positions
+        WHERE portfolio = ? AND symbol = ?
+        """,
+        (portfolio, symbol),
+    ).fetchone()
+    if quantity <= 1e-9:
+        connection.execute(
+            "DELETE FROM portfolio_positions WHERE portfolio = ? AND symbol = ?",
+            (portfolio, symbol),
+        )
+        return
+    if current is not None:
+        position = int(current["position"])
+    else:
+        position_row = connection.execute(
+            """
+            SELECT COALESCE(MAX(position) + 1, 0) AS next_position
+            FROM portfolio_positions WHERE portfolio = ?
+            """,
+            (portfolio,),
+        ).fetchone()
+        position = int(position_row["next_position"])
+    connection.execute(
+        """
+        INSERT INTO portfolio_positions (
+            portfolio, symbol, quantity, cost_basis, cost_basis_base,
+            currency, position, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(portfolio, symbol) DO UPDATE SET
+            quantity = excluded.quantity,
+            cost_basis = excluded.cost_basis,
+            cost_basis_base = excluded.cost_basis_base,
+            currency = excluded.currency,
+            updated_at = excluded.updated_at
+        """,
+        (
+            portfolio,
+            symbol,
+            quantity,
+            native_cost,
+            base_cost,
+            last_currency,
+            position,
+            updated_at,
+        ),
+    )
 
 
 @dataclass(frozen=True, slots=True)

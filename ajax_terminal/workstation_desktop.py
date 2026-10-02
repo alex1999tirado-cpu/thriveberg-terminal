@@ -325,6 +325,46 @@ class PortfolioWorkspace(QWidget):
             risk_color = AJAX_RED
         risk_row.addWidget(_label(risk_status, risk_color, bold=True))
         root.addWidget(risk_controls)
+        action_controls = _strip()
+        action_row = action_controls.layout()
+        action_row.addWidget(_label("CORPORATE ACTIONS", AJAX_CYAN, bold=True))
+        action_row.addWidget(_button("SYNC OBSERVED", self._sync_actions))
+        apply_label = (
+            "SYNC BEFORE APPLY" if model.corporate_actions is None else
+            "APPLY ELIGIBLE" if model.corporate_actions.eligible else
+            "NO ELIGIBLE ACTIONS"
+        )
+        self.apply_actions_button = _button(apply_label, self._apply_actions, amber=True)
+        self.apply_actions_button.setEnabled(
+            model.corporate_actions is not None and model.corporate_actions.eligible > 0
+        )
+        action_row.addWidget(self.apply_actions_button)
+        action_row.addStretch(1)
+        if model.corporate_actions is None:
+            corporate_status = "ON DEMAND"
+            corporate_color = AJAX_MUTED
+        else:
+            corporate_status = (
+                f"OBSERVED {model.corporate_actions.discovered}  |  "
+                f"ELIGIBLE {model.corporate_actions.eligible}  |  "
+                f"APPLIED {model.corporate_actions.applied}  |  "
+                f"REVIEW {model.corporate_actions.review}"
+            )
+            corporate_color = (
+                AJAX_RED if model.corporate_actions.review else
+                AJAX_GREEN if model.corporate_actions.eligible else AJAX_MUTED
+            )
+        action_row.addWidget(_label(corporate_status, corporate_color, bold=True))
+        root.addWidget(action_controls)
+        if model.corporate_action_result is not None:
+            result = model.corporate_action_result
+            self.action_status.setText(
+                f"CORPORATE ACTIONS  |  APPLIED {result.applied}  |  "
+                f"SKIPPED {result.skipped}  |  FAILED {result.failed}"
+            )
+            self.action_status.setStyleSheet(
+                f"color:{AJAX_GREEN if result.failed == 0 else AJAX_RED};font-weight:bold;padding:0 5px"
+            )
         self.tabs = QTabWidget()
         self.tabs.setDocumentMode(True)
         self.table = self._holdings_table()
@@ -336,6 +376,7 @@ class PortfolioWorkspace(QWidget):
         factor_page, self.factor_table = self._factor_page()
         correlation_page, self.correlation_table = self._correlation_page()
         stress_page, self.stress_table = self._stress_page()
+        corporate_page, self.corporate_actions_table = self._corporate_actions_page()
         self.tabs.addTab(self.table, "1) HOLDINGS")
         self.tabs.addTab(self.attribution_table, "2) ATTRIBUTION")
         self.tabs.addTab(transaction_page, "3) TRANSACTIONS")
@@ -345,7 +386,10 @@ class PortfolioWorkspace(QWidget):
         self.tabs.addTab(factor_page, "7) FACTORS")
         self.tabs.addTab(correlation_page, "8) CORRELATION")
         self.tabs.addTab(stress_page, "9) STRESS")
-        if model.risk is not None:
+        self.tabs.addTab(corporate_page, "10) CORP ACTIONS")
+        if model.corporate_actions is not None:
+            self.tabs.setCurrentIndex(9)
+        elif model.risk is not None:
             self.tabs.setCurrentIndex(5)
         root.addWidget(self.tabs, 1)
         self.refresh_timer = QTimer(self)
@@ -769,6 +813,81 @@ class PortfolioWorkspace(QWidget):
         layout.addWidget(table, 1)
         return page, table
 
+    def _corporate_actions_page(self) -> tuple[QWidget, QTableWidget]:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(2)
+        layout.addWidget(
+            _subheading(
+                "OBSERVED PROVIDER EVENTS  |  REVIEW BEFORE APPLY  |  "
+                "DIVIDENDS BOOK TO CASH / SPLITS PRESERVE TOTAL BOOK VALUE"
+            )
+        )
+        table = _table(
+            (
+                "DATE", "SECURITY", "ACTION", "TERMS / AMOUNT", "ENTITLED QTY",
+                "CASH NATIVE", f"VALUE {self.model.base_currency}", "POSITION DELTA",
+                "FX", "PROVIDER", "DATA", "STATUS", "CONTROL NOTE",
+            )
+        )
+        load = self.model.corporate_actions
+        candidates = load.candidates if load is not None else ()
+        table.setRowCount(max(len(candidates), 1))
+        if candidates:
+            for table_row, candidate in enumerate(candidates):
+                action = candidate.action
+                terms = (
+                    f"{action.amount:,.6f} {action.currency} / SHARE"
+                    if action.amount is not None
+                    else (
+                        f"{action.numerator:g}:{action.denominator:g}"
+                        if action.numerator is not None and action.denominator is not None
+                        else "--"
+                    )
+                )
+                values = (
+                    action.effective_date.isoformat(),
+                    action.symbol,
+                    str(action.action_type),
+                    terms,
+                    fmt_number(candidate.eligible_quantity, 6),
+                    fmt_number(candidate.cash_amount, 2),
+                    fmt_number(candidate.base_value, 2),
+                    _signed(candidate.position_delta, 6) if candidate.position_delta else "--",
+                    fmt_number(candidate.fx_rate, 6),
+                    action.provider,
+                    str(action.quality),
+                    candidate.status,
+                    candidate.notes,
+                )
+                for column, value in enumerate(values):
+                    status_color = (
+                        AJAX_GREEN if candidate.status == "ELIGIBLE" else
+                        AJAX_CYAN if candidate.status == "APPLIED" else
+                        AJAX_RED if candidate.status == "REVIEW" else AJAX_MUTED
+                    )
+                    color = (
+                        status_color if column == 11 else
+                        AJAX_AMBER if column in {3, 4, 5, 6, 7, 8} else AJAX_TEXT
+                    )
+                    cell = _item(value, color=color, right=column in {4, 5, 6, 7, 8})
+                    if column == 12:
+                        cell.setToolTip(candidate.notes)
+                    table.setItem(table_row, column, cell)
+        else:
+            message = "SELECT SYNC OBSERVED TO LOAD CORPORATE ACTIONS"
+            if load is not None and not load.symbols:
+                message = "NO LEDGER-MANAGED SECURITIES IN THIS PORTFOLIO"
+            elif load is not None:
+                message = "NO OBSERVED CORPORATE ACTIONS SINCE THE FIRST PORTFOLIO TRADE"
+            table.setItem(0, 0, _item(message, color=AJAX_MUTED))
+        table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        table.horizontalHeader().setSectionResizeMode(12, QHeaderView.ResizeMode.Stretch)
+        table.cellDoubleClicked.connect(lambda row, _column: self._open_symbol_from(table, row))
+        layout.addWidget(table, 1)
+        return page, table
+
     def _set_import_preview(self, preview: BrokerImportPreview) -> None:
         self._import_preview = preview
         self.import_status.setText(
@@ -918,7 +1037,9 @@ class PortfolioWorkspace(QWidget):
 
     @Slot()
     def _refresh(self) -> None:
-        if self.model.risk is not None:
+        if self.model.corporate_actions is not None:
+            self.command_requested.emit(f"PORT {self.model.name} ACTIONS")
+        elif self.model.risk is not None:
             self._calculate_risk()
         else:
             self.command_requested.emit(f"PORT {self.model.name}")
@@ -928,6 +1049,15 @@ class PortfolioWorkspace(QWidget):
         benchmark = self.risk_benchmark.currentText().strip().upper() or "SPY"
         period = self.risk_period.currentText().strip().upper() or "1Y"
         self.command_requested.emit(f"PORT {self.model.name} RISK {benchmark} {period}")
+
+    @Slot()
+    def _sync_actions(self) -> None:
+        self.command_requested.emit(f"PORT {self.model.name} ACTIONS REFRESH")
+
+    @Slot()
+    def _apply_actions(self) -> None:
+        if self.model.corporate_actions is not None and self.model.corporate_actions.eligible:
+            self.command_requested.emit(f"PORT {self.model.name} ACTIONS APPLY")
 
     @Slot(int, int)
     def _open_security(self, row: int, _column: int) -> None:

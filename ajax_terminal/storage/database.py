@@ -139,6 +139,39 @@ def _ensure_schema(connection: sqlite3.Connection) -> None:
     )
     connection.execute(
         """
+        CREATE TABLE IF NOT EXISTS portfolio_corporate_actions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            portfolio TEXT NOT NULL,
+            action_id TEXT NOT NULL,
+            symbol TEXT NOT NULL,
+            action_type TEXT NOT NULL,
+            effective_date TEXT NOT NULL,
+            amount REAL,
+            currency TEXT NOT NULL DEFAULT '',
+            numerator REAL,
+            denominator REAL,
+            eligible_quantity REAL NOT NULL,
+            position_delta REAL NOT NULL DEFAULT 0,
+            cash_amount REAL NOT NULL DEFAULT 0,
+            fx_rate REAL NOT NULL DEFAULT 1,
+            provider TEXT NOT NULL,
+            quality TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'APPLIED',
+            notes TEXT NOT NULL DEFAULT '',
+            applied_at TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            UNIQUE (portfolio, action_id)
+        )
+        """
+    )
+    connection.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_portfolio_corporate_actions_date
+        ON portfolio_corporate_actions (portfolio, effective_date DESC, id DESC)
+        """
+    )
+    connection.execute(
+        """
         CREATE TABLE IF NOT EXISTS alerts (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             symbol TEXT NOT NULL,
