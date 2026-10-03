@@ -1,6 +1,6 @@
 param(
     [ValidatePattern('^\d{3}$')]
-    [string]$BetaVersion = "021",
+    [string]$BetaVersion = "022",
     [ValidatePattern('^\d+\.\d+\.\d+$')]
     [string]$AppVersion = "0.5.0",
     [string]$SigningKeyPath = "$env:LOCALAPPDATA\THRIVEBERG Terminal\release-signing-key.bin",

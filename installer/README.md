@@ -16,14 +16,14 @@ desktop-client identifiers, not privileged credentials; database access remains
 restricted by Supabase Auth and Row Level Security. Secret and `service_role`
 keys must never be added to the installer.
 
-Beta 020 is the current distributable build. Build the next beta from a clean
+Beta 021 is the current distributable build. Build the next beta from a clean
 Git working tree with:
 
 ```powershell
 .\build_installer.ps1
 ```
 
-The script defaults to Beta 021 and application version 0.5.0. Use explicit
+The script defaults to Beta 022 and application version 0.5.0. Use explicit
 parameters for later releases.
 
 Validate an installer with `tools\smoke_installer.ps1`. The script waits for

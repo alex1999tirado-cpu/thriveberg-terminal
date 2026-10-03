@@ -1,22 +1,25 @@
 # Security audit - 2026-10-03
 
-Scope: THRIVEBERG Terminal 0.5.0 Beta 020 source tree, packaged application and
+Scope: THRIVEBERG Terminal 0.5.0 Beta 021 source tree, packaged application and
 Windows installer.
 
 ## Results
 
-- `pytest`: 302 passed, with 21 third-party deprecation warnings.
+- `pytest`: 305 passed, with 21 third-party deprecation warnings.
 - `pip-audit`: no known vulnerable installed dependencies.
 - Bandit: no medium- or high-severity findings after hardening.
 - `detect-secrets`: no unreviewed findings. The public SHA-256 values in the
   DOOM integrity manifest are recorded as audited false positives.
-- Installer SHA-256: `C78CD104D3FA8A06AEFD638FB5B7B8FBBC1B52A45A2F65B4966318BF1863182A`.
-- Packaged executable SHA-256: `6585E91005D77B54C371E9491BF32837793266F0AA3BE90591C1687C1D2E9343`.
-- Microsoft Defender custom scans: zero detections for the Beta 020 installer
+- Installer SHA-256: `5E0970E781703CECE6DD48DB6AA38B30D53B4A8B8C218D1FF08B65C2D3F832C3`.
+- Installed executable SHA-256: `CD0CAFED9480770E3C510904892CD080872603BAE68FBB8EDE5471F5DBCB874E`.
+- Microsoft Defender custom scans: zero detections for the Beta 021 installer
   and installed executable.
 - Packaged and installed smoke tests: successful `DIAG` render at 1920x1080.
-  The installed build reports 0.5.0 Beta 020 from commit `781a43589e4b`, with
+  The installed build reports 0.5.0 Beta 021 from commit `b4c4404631a1`, with
   11 checks passed and no failures or warnings.
+- Global Overview coverage verifies persisted display/panel configuration,
+  recursive-command rejection, four independent compact workspaces and
+  double-click expansion/restoration of the complete 2 x 2 market wall.
 - Workspace-tab coverage verifies independent securities and live widgets,
   route ownership during background loads, session restoration, and secondary
   terminal-window cleanup for multi-monitor use.
@@ -54,7 +57,7 @@ Windows installer.
 
 ## Residual risks
 
-- Beta 020 is not Authenticode signed, so Windows SmartScreen can still warn on
+- Beta 021 is not Authenticode signed, so Windows SmartScreen can still warn on
   the initial installer. The in-app Ed25519 trust root authenticates subsequent
   THRIVEBERG update manifests independently of GitHub transport.
 - Public market-data endpoints can be delayed, rate limited, changed, or
