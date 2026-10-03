@@ -93,6 +93,7 @@ from ajax_terminal.government_desktop import (
     load_government_bonds,
 )
 from ajax_terminal.macro_map_desktop import MacroMapLoad, MacroMapWorkspace, load_macro_map
+from ajax_terminal.markets_desktop import MarketMonitorLoad, MarketMonitorWorkspace, load_market_monitor
 from ajax_terminal.news_desktop import NewsDesktopWorkspace, NewsLoad, load_news
 from ajax_terminal.options_desktop import (
     OptionsDesktopLoad,
@@ -3199,18 +3200,26 @@ class AjaxDesktopWindow(QMainWindow):
             controller.deleteLater()
 
     def _show_home(self) -> None:
-        columns = max(120, self.stack.width() // 10)
-        rows = max(34, self.stack.height() // 20)
         self._load_workspace(
-            "MARKET MONITOR",
-            lambda: render_classic_snapshot(
-                "HOME",
-                self.social_service,
-                columns=columns,
-                rows=rows,
-            ),
-            self._mount_classic,
+            "NATIVE CROSS-ASSET MONITOR",
+            load_market_monitor,
+            self._mount_market_monitor,
         )
+
+    def _mount_market_monitor(self, model: object) -> None:
+        if not isinstance(model, MarketMonitorLoad):
+            raise TypeError("Market monitor loader returned an invalid result")
+        workspace = MarketMonitorWorkspace(model)
+        self._connect_tab_command(workspace.command_requested)
+        workspace.ready.connect(self.workspace_ready.emit)
+        self._replace_workspace(workspace)
+        self.engine_label.setText("NATIVE QT / APACHE ECHARTS 6.1.0 / VERIFIED MARKET DATA")
+        self.instrument_bar.setText(
+            f"MARKETS   |   CROSS-ASSET   |   {len(model.available)}/{len(model.quotes)} OBSERVATIONS   |   "
+            "AUTO REFRESH 30S"
+        )
+        self.popout_button.setEnabled(False)
+        QTimer.singleShot(6_000, self.workspace_ready.emit)
 
     def _show_security_function_menu(self, symbol: str) -> None:
         registered = self.registry.get(symbol)

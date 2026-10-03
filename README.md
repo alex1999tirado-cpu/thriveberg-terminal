@@ -33,9 +33,14 @@ independent terminal windows for two- and three-monitor desks.
 
 ### Cross-asset market monitor
 
-![THRIVEBERG world equity monitor](screenshots/terminal-markets.png)
+![THRIVEBERG native cross-asset market monitor](screenshots/terminal-markets.png)
 
-WEI groups major indices by region, carries market status and data quality on every row, and keeps the live watchlist and news context visible beside the market grid.
+`MARKETS` is a native cross-asset dashboard for equities, FX, sovereign rates,
+credit and commodities. Its interactive matrix, daily-movers chart, selected-
+security detail, verified headline preview and asset-class breadth panel share a
+single dense workspace. Double-clicking a security opens `GP`; a single news
+click previews the story and a double-click opens its source. The layout reduces
+to the essential market columns when used inside the Global Overview wall.
 
 ### Fundamentals and listed options
 
@@ -171,7 +176,7 @@ its provider and quality state; unavailable observations remain unavailable.
 - Universal command palette.
 - Configurable `WALL` global overview with four independent live workspaces, automatic secondary-display startup and single-pane expansion.
 - Live workspace tabs with independent instrument context, history and retained views; any tab can open as a complete second terminal window for multi-monitor desks.
-- Market monitor home screen.
+- Native cross-asset market monitor with a structured quote matrix, daily-movers chart, security drill-down, verified news preview, breadth analytics and responsive Global Overview mode.
 - Central instrument registry: 27 global indices, 45 G10 FX crosses, 28 sovereign yields, 6 credit benchmarks, 8 corporate cash bonds, and 17 major commodities.
 - `WEI` world indices monitor grouped into Americas, Europe, and Asia-Pacific with YTD performance and market status.
 - Filterable instrument discovery screens and a full G10 FX matrix.
