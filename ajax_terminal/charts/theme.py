@@ -140,6 +140,49 @@ def qt_stylesheet() -> str:
             background: #e3e3e3;
             color: #050505;
         }}
+        QTabWidget#terminalDocumentTabs::pane {{
+            background: {AJAX_BACKGROUND};
+            border: 1px solid {AJAX_GRID};
+            border-top: 0px;
+        }}
+        QTabWidget#terminalDocumentTabs > QTabBar::tab {{
+            background: #24272a;
+            color: {AJAX_TEXT};
+            border: 0px;
+            border-right: 1px solid #080909;
+            min-width: 112px;
+            max-width: 220px;
+            min-height: 24px;
+            padding: 2px 12px;
+        }}
+        QTabWidget#terminalDocumentTabs > QTabBar::tab:hover {{
+            background: #3a3d40;
+            color: white;
+        }}
+        QTabWidget#terminalDocumentTabs > QTabBar::tab:selected {{
+            background: {AJAX_AMBER};
+            color: #050505;
+        }}
+        QWidget#terminalTabTools {{
+            background: #111315;
+            border: 0px;
+        }}
+        QToolButton#workspaceTabTool {{
+            background: #303338;
+            color: {AJAX_TEXT};
+            border: 0px;
+            border-left: 1px solid #080909;
+            border-radius: 0px;
+            min-width: 30px;
+            max-width: 30px;
+            min-height: 24px;
+            padding: 0px;
+            font-weight: bold;
+        }}
+        QToolButton#workspaceTabTool:hover {{
+            background: {AJAX_AMBER};
+            color: #050505;
+        }}
         QTextBrowser#socialTranscript {{
             background: #030404;
             border: 1px solid {AJAX_GRID};

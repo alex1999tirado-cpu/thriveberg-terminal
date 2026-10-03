@@ -12,6 +12,14 @@ It does not use Bloomberg branding, logos, proprietary typefaces, or protected U
 
 ## Product tour
 
+### Tabbed and multi-monitor workspaces
+
+![THRIVEBERG independent workspace tabs](screenshots/workspace-tabs.png)
+
+Each tab retains its own security, command history and live view. Tabs can be
+reordered, closed, restored at the next sign-in, or opened as complete
+independent terminal windows for two- and three-monitor desks.
+
 ### Cross-asset market monitor
 
 ![THRIVEBERG world equity monitor](screenshots/terminal-markets.png)
@@ -136,6 +144,7 @@ its provider and quality state; unavailable observations remain unavailable.
 
 - Textual/Rich terminal interface with dense market panels.
 - Universal command palette.
+- Live workspace tabs with independent instrument context, history and retained views; any tab can open as a complete second terminal window for multi-monitor desks.
 - Market monitor home screen.
 - Central instrument registry: 27 global indices, 45 G10 FX crosses, 28 sovereign yields, 6 credit benchmarks, 8 corporate cash bonds, and 17 major commodities.
 - `WEI` world indices monitor grouped into Americas, Europe, and Asia-Pacific with YTD performance and market status.
@@ -389,7 +398,17 @@ WSP
 UPD
 DIAG
 DOOM
+TAB NEW
+TAB NEW AAPL DES
+TAB CLOSE
+TAB WINDOW
 ```
+
+Workspace tabs are also available from the `+` control. `Ctrl+T` opens a tab,
+`Ctrl+W` closes it, `Ctrl+PgUp` / `Ctrl+PgDown` cycle tabs and `Ctrl+Shift+D`
+opens the active workspace as an independent terminal window on the next display.
+Double-clicking a tab performs the same multi-window action. Open tab commands
+and the active tab are restored with the next signed-in session.
 
 `NEWS` opens the top-stories wire. Use `NEWS <ticker>` for instrument headlines or
 `NEWS MARKETS`, `NEWS ECONOMY`, `NEWS CENTRAL BANKS`, `NEWS COMPANIES`, `NEWS TECH`

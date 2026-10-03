@@ -4,6 +4,23 @@ This inventory keeps every THRIVEBERG command attached to an explicit Bloomberg-
 visual family. `tests/test_visual_command_inventory.py` fails when a new command
 is introduced without a reviewed screen family.
 
+## 2026-10-03 Tabbed Workspace Pass
+
+- `TERMINAL` now contains a compact document-tab strip. Every tab retains its
+  own security context, command history, live widget, engine status and pop-out
+  state instead of destroying the previous function when navigation changes.
+- Tabs are movable and individually closable. The amber active state, gray
+  inactive state and square controls follow the existing terminal grammar and
+  were checked at 1920 x 1080 with three simultaneous equity workspaces.
+- Slow asynchronous loads are bound to the tab that started them, so completing
+  `OVDV`, `FA` or another data request cannot overwrite a different active tab.
+- `Ctrl+T`, `Ctrl+W`, `Ctrl+PgUp`, `Ctrl+PgDown` and `Ctrl+Shift+D` cover the
+  keyboard workflow. `TAB NEW`, `TAB CLOSE` and `TAB WINDOW` expose the same
+  operations through the command line.
+- A tab can open as a complete independent terminal window on the next available
+  display. Secondary windows keep normal navigation and can create their own tabs.
+- Open tab commands and the active tab are persisted for authenticated sessions.
+
 ## 2026-10-02 Data Quality Pass
 
 - `DQM` adds a native four-view data-quality workstation for provider health,

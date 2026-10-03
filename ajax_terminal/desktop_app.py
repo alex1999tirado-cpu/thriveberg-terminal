@@ -37,6 +37,7 @@ from PySide6.QtWidgets import (
     QTableWidget,
     QTableWidgetItem,
     QTabWidget,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -168,6 +169,28 @@ class DesktopRoute:
     period: str | None = None
     interval: str | None = None
     raw: str = ""
+
+
+@dataclass(slots=True)
+class _TerminalTabState:
+    stack: QStackedWidget
+    current_route: DesktopRoute
+    current_symbol: str
+    history: list[DesktopRoute]
+    history_index: int = 0
+    engine_text: str = "NATIVE QT / WEBENGINE / VTK"
+    instrument_text: str = "NO ACTIVE SECURITY   |   ENTER NAME OR TICKER   |   THEN FUNCTION <GO>"
+    popout_enabled: bool = False
+    popout_text: str = "POP OUT"
+    load_serial: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class _WorkspaceLoadContext:
+    tab: _TerminalTabState
+    serial: int
+    engine: str
+    mount: Callable[[object], None]
 
 
 def resolve_desktop_command(raw: str, current_symbol: str = "") -> DesktopRoute:
@@ -700,6 +723,18 @@ class AjaxDesktopWindow(QMainWindow):
         self._restored_session_command = str(
             self.settings.value("session/last_command", "") or ""
         ).strip()
+        restored_tabs = self.settings.value("session/open_tabs", []) or []
+        if isinstance(restored_tabs, str):
+            restored_tabs = [restored_tabs]
+        self._restored_tab_commands = tuple(
+            str(command).strip()
+            for command in restored_tabs
+            if str(command).strip()
+        )[:12]
+        self._restored_tab_index = max(
+            0,
+            int(self.settings.value("session/active_tab", 0) or 0),
+        )
         if self._session_persistence_enabled:
             self.settings.setValue("session/clean_shutdown", False)
             self.settings.sync()
@@ -714,6 +749,7 @@ class AjaxDesktopWindow(QMainWindow):
         self._history_index = 0
         self._loader: _Loader | None = None
         self._workspace_loaders: list[_Loader] = []
+        self._workspace_load_contexts: dict[_Loader, _WorkspaceLoadContext] = {}
         self._pending_mount: Callable[[object], None] | None = None
         self._pending_engine = ""
         self._load_serial = 0
@@ -726,6 +762,9 @@ class AjaxDesktopWindow(QMainWindow):
         self._alert_session_serial = 0
         self._alert_worker_session: int | None = None
         self._alert_started_once = False
+        self._terminal_tabs: dict[QStackedWidget, _TerminalTabState] = {}
+        self._active_terminal_tab: _TerminalTabState | None = None
+        self._secondary_windows: list[AjaxDesktopWindow] = []
 
         host = QWidget()
         host_layout = QVBoxLayout(host)
@@ -762,6 +801,11 @@ class AjaxDesktopWindow(QMainWindow):
             ("Ctrl+L", self._focus_command),
             ("Ctrl+1", lambda: self.workspace_tabs.setCurrentIndex(0)),
             ("Ctrl+2", lambda: self.workspace_tabs.setCurrentIndex(1)),
+            ("Ctrl+T", self.new_terminal_tab),
+            ("Ctrl+W", self.close_current_terminal_tab),
+            ("Ctrl+Shift+D", self.open_current_tab_window),
+            ("Ctrl+PgUp", lambda: self._cycle_terminal_tab(-1)),
+            ("Ctrl+PgDown", lambda: self._cycle_terminal_tab(1)),
             ("Alt+Left", self.go_back),
             ("Alt+Right", self.go_forward),
             ("F8", lambda: self.execute_text("GP")),
@@ -869,11 +913,39 @@ class AjaxDesktopWindow(QMainWindow):
         self.suggestion_panel = self._build_suggestion_panel()
         layout.addWidget(self.suggestion_panel)
 
-        self.stack = QStackedWidget()
-        self.stack.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        layout.addWidget(self.stack, 1)
+        self.document_tabs = QTabWidget()
+        self.document_tabs.setObjectName("terminalDocumentTabs")
+        self.document_tabs.setDocumentMode(True)
+        self.document_tabs.setTabsClosable(True)
+        self.document_tabs.setMovable(True)
+        self.document_tabs.tabBar().setExpanding(False)
+        self.document_tabs.tabBar().setElideMode(Qt.TextElideMode.ElideRight)
+        self.document_tabs.currentChanged.connect(self._terminal_tab_changed)
+        self.document_tabs.tabCloseRequested.connect(self.close_terminal_tab)
+        self.document_tabs.tabBarDoubleClicked.connect(self._terminal_tab_double_clicked)
+
+        tab_tools = QWidget()
+        tab_tools.setObjectName("terminalTabTools")
+        tab_tools_row = QHBoxLayout(tab_tools)
+        tab_tools_row.setContentsMargins(2, 0, 2, 0)
+        tab_tools_row.setSpacing(2)
+        self.new_tab_button = QToolButton()
+        self.new_tab_button.setObjectName("workspaceTabTool")
+        self.new_tab_button.setText("+")
+        self.new_tab_button.setToolTip("New workspace tab (Ctrl+T)")
+        self.new_tab_button.clicked.connect(self.new_terminal_tab)
+        tab_tools_row.addWidget(self.new_tab_button)
+        self.new_window_button = QToolButton()
+        self.new_window_button.setObjectName("workspaceTabTool")
+        self.new_window_button.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_TitleBarNormalButton))
+        self.new_window_button.setToolTip("Open this workspace in another window (Ctrl+Shift+D)")
+        self.new_window_button.clicked.connect(self.open_current_tab_window)
+        tab_tools_row.addWidget(self.new_window_button)
+        self.document_tabs.setCornerWidget(tab_tools, Qt.Corner.TopRightCorner)
+        layout.addWidget(self.document_tabs, 1)
+        self._create_terminal_tab("HOME", activate=True, execute=False, inherit_symbol=False)
         self.footer = QLabel(
-            "F1 HELP   F2 MARKETS   F5 EQUITY   F8 GP   F9 SOCIAL   F10 OPTIONS   |   WATC  PORT  ALRT  EQS  EVT  FLDS  WSP  UPD  DOOM"
+            "F1 HELP   F2 MARKETS   F5 EQUITY   F8 GP   F9 SOCIAL   F10 OPTIONS   |   CTRL+T TAB   CTRL+W CLOSE   CTRL+SHIFT+D WINDOW"
         )
         self.footer.setObjectName("footerBar")
         layout.addWidget(self.footer)
@@ -1352,14 +1424,27 @@ class AjaxDesktopWindow(QMainWindow):
                 self._update_navigation()
         command = self._startup_command
         self._startup_command = None
-        if not command and self._restored_session_command:
-            command = self._restored_session_command
-        if command:
+        if not command and self._restored_tab_commands:
+            QTimer.singleShot(0, self._restore_session_tabs)
+            if not self._previous_clean_shutdown:
+                self.statusBar().showMessage("PREVIOUS SESSION RECOVERED", 8_000)
+        elif command:
             QTimer.singleShot(0, lambda: self.execute_text(command))
             if not self._previous_clean_shutdown:
                 self.statusBar().showMessage("PREVIOUS SESSION RECOVERED", 8_000)
+        elif self._restored_session_command:
+            QTimer.singleShot(0, lambda: self.execute_text(self._restored_session_command))
         else:
             QTimer.singleShot(0, lambda: self.execute_text("HOME"))
+
+    def _restore_session_tabs(self) -> None:
+        commands = self._restored_tab_commands or (self._restored_session_command or "HOME",)
+        self.document_tabs.setCurrentIndex(0)
+        self.execute_text(commands[0], record_history=False)
+        for command in commands[1:12]:
+            self._create_terminal_tab(command)
+        active = min(self._restored_tab_index, self.document_tabs.count() - 1)
+        self.document_tabs.setCurrentIndex(max(active, 0))
 
     @Slot(str)
     def _auth_failed(self, message: str) -> None:
@@ -1446,6 +1531,214 @@ class AjaxDesktopWindow(QMainWindow):
         if index == 1 and self._authenticated:
             self.social_workspace.activate()
 
+    def _create_terminal_tab(
+        self,
+        command: str = "HOME",
+        *,
+        activate: bool = True,
+        execute: bool = True,
+        inherit_symbol: bool = True,
+    ) -> _TerminalTabState:
+        inherited_symbol = self.current_symbol if inherit_symbol else ""
+        home = DesktopRoute("home", inherited_symbol, raw="HOME")
+        stack = QStackedWidget()
+        stack.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        placeholder = QFrame()
+        placeholder.setObjectName("emptyWorkspace")
+        placeholder_layout = QVBoxLayout(placeholder)
+        placeholder_layout.setContentsMargins(36, 30, 36, 30)
+        placeholder_layout.addWidget(QLabel("NEW WORKSPACE"))
+        placeholder_layout.addStretch(1)
+        stack.addWidget(placeholder)
+        state = _TerminalTabState(stack, home, inherited_symbol, [home])
+        self._terminal_tabs[stack] = state
+        index = self.document_tabs.addTab(stack, "MARKETS")
+        self.document_tabs.setTabToolTip(index, "HOME")
+        if activate or self._active_terminal_tab is None:
+            self.document_tabs.setCurrentIndex(index)
+            self._terminal_tab_changed(index)
+        if execute:
+            self.execute_text(command)
+        return state
+
+    @Slot()
+    def new_terminal_tab(self) -> None:
+        self.workspace_tabs.setCurrentIndex(0)
+        self._create_terminal_tab("HOME")
+        QTimer.singleShot(0, self.command.setFocus)
+
+    @Slot(int)
+    def _terminal_tab_changed(self, index: int) -> None:
+        stack = self.document_tabs.widget(index)
+        state = self._terminal_tabs.get(stack)
+        if state is None:
+            return
+        previous = self._active_terminal_tab
+        if previous is not None and previous is not state:
+            self._capture_terminal_tab_state(previous)
+        self._active_terminal_tab = state
+        self._restore_terminal_tab_state(state)
+        if hasattr(self, "footer"):
+            self._persist_session_state()
+
+    def _capture_terminal_tab_state(self, state: _TerminalTabState | None = None) -> None:
+        state = state or self._active_terminal_tab
+        if state is None:
+            return
+        state.current_route = self.current_route
+        state.current_symbol = self.current_symbol
+        state.history = self._history
+        state.history_index = self._history_index
+        state.engine_text = self.engine_label.text()
+        state.instrument_text = self.instrument_bar.text()
+        state.popout_enabled = self.popout_button.isEnabled()
+        state.popout_text = self.popout_button.text()
+        index = self.document_tabs.indexOf(state.stack)
+        if index >= 0:
+            self.document_tabs.setTabText(index, self._terminal_tab_title(state.current_route))
+            self.document_tabs.setTabToolTip(index, state.current_route.raw or "HOME")
+
+    def _restore_terminal_tab_state(self, state: _TerminalTabState) -> None:
+        self.stack = state.stack
+        self.current_route = state.current_route
+        self.current_symbol = state.current_symbol
+        self._history = state.history
+        self._history_index = state.history_index
+        self._set_route_labels(state.current_route)
+        self.engine_label.setText(state.engine_text)
+        self.instrument_bar.setText(state.instrument_text)
+        self.popout_button.setEnabled(state.popout_enabled)
+        self.popout_button.setText(state.popout_text)
+        self._update_navigation()
+
+    def _terminal_tab_title(self, route: DesktopRoute) -> str:
+        if route.kind == "home":
+            return "MARKETS"
+        if route.kind == "select":
+            return f"{route.target} MENU"[:28]
+        parsed = parse_command(route.raw)
+        command = parsed.action.value if parsed.action != CommandAction.UNKNOWN else route.kind.upper()
+        if route.target:
+            if route.kind in _SECURITY_ROUTE_KINDS:
+                return f"{route.target} {command}"[:28]
+            return f"{command} {route.target}"[:28]
+        return str(command)[:28]
+
+    @Slot(int)
+    def close_terminal_tab(self, index: int) -> None:
+        if self.document_tabs.count() <= 1:
+            self.document_tabs.setCurrentIndex(0)
+            self.execute_text("HOME")
+            return
+        stack = self.document_tabs.widget(index)
+        state = self._terminal_tabs.get(stack)
+        if state is None:
+            return
+        was_active = state is self._active_terminal_tab
+        if was_active:
+            self._capture_terminal_tab_state(state)
+        state.load_serial += 1
+        self.document_tabs.blockSignals(True)
+        self.document_tabs.removeTab(index)
+        self.document_tabs.blockSignals(False)
+        self._terminal_tabs.pop(stack, None)
+        while stack.count():
+            widget = stack.widget(0)
+            stack.removeWidget(widget)
+            self._dispose_workspace(widget)
+        stack.deleteLater()
+        if was_active:
+            self._active_terminal_tab = None
+            next_index = min(index, self.document_tabs.count() - 1)
+            self.document_tabs.setCurrentIndex(next_index)
+            self._terminal_tab_changed(next_index)
+        self._persist_session_state()
+
+    @Slot()
+    def close_current_terminal_tab(self) -> None:
+        if self.workspace_tabs.currentIndex() != 0:
+            self.workspace_tabs.setCurrentIndex(0)
+            return
+        self.close_terminal_tab(self.document_tabs.currentIndex())
+
+    @Slot(int)
+    def _terminal_tab_double_clicked(self, index: int) -> None:
+        if index >= 0:
+            self.document_tabs.setCurrentIndex(index)
+            self.open_current_tab_window()
+
+    def _cycle_terminal_tab(self, step: int) -> None:
+        count = self.document_tabs.count()
+        if count < 2:
+            return
+        self.workspace_tabs.setCurrentIndex(0)
+        self.document_tabs.setCurrentIndex((self.document_tabs.currentIndex() + step) % count)
+
+    @Slot()
+    def open_current_tab_window(self) -> None:
+        state = self._active_terminal_tab
+        if state is None:
+            return
+        self._capture_terminal_tab_state(state)
+        command = state.current_route.raw or "HOME"
+        window = AjaxDesktopWindow(require_login=False)
+        window.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
+        window.setWindowTitle(f"THRIVEBERG Terminal - {self._terminal_tab_title(state.current_route)}")
+        self._secondary_windows.append(window)
+        window.destroyed.connect(lambda _obj=None, child=window: self._forget_secondary_window(child))
+        window.showNormal()
+        screens = QApplication.screens()
+        if screens:
+            current_screen = self.screen() or QApplication.primaryScreen()
+            current_index = screens.index(current_screen) if current_screen in screens else 0
+            target = screens[(current_index + len(self._secondary_windows)) % len(screens)]
+            window.move(target.availableGeometry().topLeft())
+            window.resize(target.availableGeometry().size())
+            window.showMaximized()
+        else:
+            window.show()
+        window.start(command)
+        self.statusBar().showMessage(f"WORKSPACE WINDOW OPENED: {command}", 6_000)
+
+    def _forget_secondary_window(self, window: AjaxDesktopWindow) -> None:
+        if window in self._secondary_windows:
+            self._secondary_windows.remove(window)
+
+    def _execute_for_stack(self, stack: QStackedWidget, command: str) -> None:
+        index = self.document_tabs.indexOf(stack)
+        if index < 0:
+            return
+        self.workspace_tabs.setCurrentIndex(0)
+        self.document_tabs.setCurrentIndex(index)
+        self.execute_text(command)
+
+    def _connect_tab_command(self, signal: Signal) -> None:
+        stack = self.stack
+        signal.connect(lambda command, target=stack: self._execute_for_stack(target, command))
+
+    def _run_in_terminal_tab(self, state: _TerminalTabState, callback: Callable[[], None]) -> None:
+        if state.stack not in self._terminal_tabs:
+            return
+        active = self._active_terminal_tab
+        if active is state:
+            callback()
+            self._capture_terminal_tab_state(state)
+            return
+        if active is not None:
+            self._capture_terminal_tab_state(active)
+        self.current_route = state.current_route
+        self.current_symbol = state.current_symbol
+        self._history = state.history
+        self._history_index = state.history_index
+        self.stack = state.stack
+        try:
+            callback()
+            self._capture_terminal_tab_state(state)
+        finally:
+            if active is not None and active.stack in self._terminal_tabs:
+                self._active_terminal_tab = active
+                self._restore_terminal_tab_state(active)
+
     @Slot(str)
     def _open_shared_command(self, command: str) -> None:
         self.workspace_tabs.setCurrentIndex(0)
@@ -1506,6 +1799,9 @@ class AjaxDesktopWindow(QMainWindow):
         tools_menu.addAction("UPD  BETA RELEASES", lambda: self.execute_text("UPD"))
         tools_menu.addAction("DIAG  SYSTEM DIAGNOSTICS", lambda: self.execute_text("DIAG"))
         tools_menu.addAction("DOOM  CLASSIC GAME", lambda: self.execute_text("DOOM"))
+        tools_menu.addSeparator()
+        tools_menu.addAction("NEW WORKSPACE TAB    CTRL+T", self.new_terminal_tab)
+        tools_menu.addAction("OPEN TAB IN WINDOW   CTRL+SHIFT+D", self.open_current_tab_window)
         tools_menu.addSeparator()
         tools_menu.addAction("DATA CONNECTIONS", self._show_data_connections)
         tools_button.setMenu(tools_menu)
@@ -1702,10 +1998,28 @@ class AjaxDesktopWindow(QMainWindow):
 
     def execute_text(self, raw: str, *, record_history: bool = True) -> None:
         self._hide_suggestions()
-        if " ".join(raw.strip().upper().split()) in {"LOGOUT", "SIGN OUT", "SIGNOUT"}:
+        clean = " ".join(raw.strip().upper().split())
+        if clean in {"LOGOUT", "SIGN OUT", "SIGNOUT"}:
             self.logout()
             return
+        if clean in {"TAB", "TAB NEW", "NEWTAB"}:
+            self.new_terminal_tab()
+            return
+        if clean.startswith("TAB NEW "):
+            self._create_terminal_tab(clean.removeprefix("TAB NEW "))
+            return
+        if clean in {"TAB CLOSE", "CLOSETAB"}:
+            self.close_current_terminal_tab()
+            return
+        if clean in {"TAB WINDOW", "TAB DETACH", "NEWWINDOW"}:
+            self.open_current_tab_window()
+            return
         route = resolve_desktop_command(raw, self.current_symbol)
+        if route.kind == "social":
+            self.workspace_tabs.setCurrentIndex(1)
+            self.social_workspace.activate()
+            QTimer.singleShot(0, self.workspace_ready.emit)
+            return
         self.popout_button.setText("POP OUT")
         parsed = parse_command(route.raw)
         if route.kind != "social":
@@ -1715,6 +2029,7 @@ class AjaxDesktopWindow(QMainWindow):
             self.current_route = route
             self._record(route, record_history)
             self._set_route_labels(route)
+            self._capture_terminal_tab_state()
             self._persist_session_state()
             self._show_security_function_menu(route.target)
             return
@@ -1723,6 +2038,7 @@ class AjaxDesktopWindow(QMainWindow):
         self.current_route = route
         self._record(route, record_history)
         self._set_route_labels(route)
+        self._capture_terminal_tab_state()
         self._persist_session_state()
         if route.kind == "home":
             self._show_home()
@@ -1979,9 +2295,18 @@ class AjaxDesktopWindow(QMainWindow):
     def _persist_session_state(self) -> None:
         if not self._session_persistence_enabled:
             return
+        self._capture_terminal_tab_state()
+        open_tabs = []
+        if hasattr(self, "document_tabs"):
+            for index in range(self.document_tabs.count()):
+                state = self._terminal_tabs.get(self.document_tabs.widget(index))
+                if state is not None:
+                    open_tabs.append(state.current_route.raw or "HOME")
         self.settings.setValue("session/last_command", self.current_route.raw or "HOME")
         self.settings.setValue("session/current_symbol", self.current_symbol)
         self.settings.setValue("session/history", [route.raw for route in self._history[-50:] if route.raw])
+        self.settings.setValue("session/open_tabs", open_tabs)
+        self.settings.setValue("session/active_tab", self.document_tabs.currentIndex())
         self.settings.setValue("session/window_geometry", self.saveGeometry())
         self.settings.setValue("session/window_maximized", self.isMaximized())
 
@@ -2017,8 +2342,13 @@ class AjaxDesktopWindow(QMainWindow):
         loader: Callable[[], object],
         mount: Callable[[object], None],
     ) -> None:
+        tab = self._active_terminal_tab
+        if tab is None:
+            return
         self._load_serial += 1
         serial = self._load_serial
+        tab.load_serial += 1
+        tab_serial = tab.load_serial
         self.popout_button.setEnabled(False)
         self.engine_label.setText(f"LOADING {engine}...")
         self._show_message(
@@ -2028,7 +2358,14 @@ class AjaxDesktopWindow(QMainWindow):
         )
         thread = _Loader(loader)
         thread.setProperty("ajaxSerial", serial)
+        thread.setProperty("terminalTabSerial", tab_serial)
         self._workspace_loaders.append(thread)
+        self._workspace_load_contexts[thread] = _WorkspaceLoadContext(
+            tab,
+            tab_serial,
+            engine,
+            mount,
+        )
         self._loader = thread
         self._pending_mount = mount
         self._pending_engine = engine
@@ -2040,35 +2377,48 @@ class AjaxDesktopWindow(QMainWindow):
     @Slot(object)
     def _workspace_loaded(self, model: object) -> None:
         thread = self.sender()
-        if thread is self._loader and int(thread.property("ajaxSerial")) == self._load_serial:
-            mount = self._pending_mount
-            if mount is not None:
-                mount(model)
+        context = self._workspace_load_contexts.get(thread)
+        if context is None or context.serial != context.tab.load_serial:
+            return
+        self._run_in_terminal_tab(context.tab, lambda: context.mount(model))
 
     @Slot(str)
     def _workspace_failed(self, message: str) -> None:
         thread = self.sender()
-        if thread is self._loader and int(thread.property("ajaxSerial")) == self._load_serial:
-            self.engine_label.setText(f"{self._pending_engine} ERROR")
+        context = self._workspace_load_contexts.get(thread)
+        if context is None or context.serial != context.tab.load_serial:
+            return
+
+        def show_error() -> None:
+            self.engine_label.setText(f"{context.engine} ERROR")
             self._show_message("DATA / ENGINE ERROR", message, error=True)
+
+        self._run_in_terminal_tab(context.tab, show_error)
 
     @Slot()
     def _workspace_thread_finished(self) -> None:
         thread = self.sender()
         if thread in self._workspace_loaders:
             self._workspace_loaders.remove(thread)
+        self._workspace_load_contexts.pop(thread, None)
         if thread is self._loader:
             self._loader = None
             self._pending_mount = None
         thread.deleteLater()
 
     def _mount_price(self, model: object) -> None:
+        tab_stack = self.stack
         controller = PriceChartWindow(model)
         controller.title.hide()
-        controller.market_updated.connect(self._update_price_instrument)
+        controller.market_updated.connect(
+            lambda updated, target=tab_stack: self._update_price_instrument_for_stack(target, updated)
+        )
         controller.chart.loadFinished.connect(lambda _ok: self.workspace_ready.emit())
         controller.refresh_requested.connect(
-            lambda symbol, period, interval: self.execute_text(f"GP {symbol} {period} {interval}")
+            lambda symbol, period, interval, target=tab_stack: self._execute_for_stack(
+                target,
+                f"GP {symbol} {period} {interval}",
+            )
         )
         workspace = controller.takeCentralWidget()
         workspace._ajax_controller = controller
@@ -2079,10 +2429,13 @@ class AjaxDesktopWindow(QMainWindow):
         QTimer.singleShot(6_000, self.workspace_ready.emit)
 
     def _mount_curve(self, model: object) -> None:
+        tab_stack = self.stack
         controller = CurveWindow(model)
         controller.title.hide()
         controller.chart.loadFinished.connect(lambda _ok: self.workspace_ready.emit())
-        controller.refresh_requested.connect(lambda currency: self.execute_text(f"CURVE {currency}"))
+        controller.refresh_requested.connect(
+            lambda currency, target=tab_stack: self._execute_for_stack(target, f"CURVE {currency}")
+        )
         workspace = controller.takeCentralWidget()
         workspace._ajax_controller = controller
         self._replace_workspace(workspace)
@@ -2098,7 +2451,7 @@ class AjaxDesktopWindow(QMainWindow):
         if not isinstance(model, MacroMapLoad):
             raise TypeError("Macro map loader returned an invalid result")
         workspace = MacroMapWorkspace(model)
-        workspace.command_requested.connect(self.execute_text)
+        self._connect_tab_command(workspace.command_requested)
         workspace.ready.connect(self.workspace_ready.emit)
         self._replace_workspace(workspace)
         self.engine_label.setText("THREE.JS 0.186 / OFFICIAL MACRO + MARKET DATA")
@@ -2111,7 +2464,7 @@ class AjaxDesktopWindow(QMainWindow):
 
     def _mount_data_audit(self, model: object) -> None:
         workspace = DataAuditWorkspace(model)
-        workspace.command_requested.connect(self.execute_text)
+        self._connect_tab_command(workspace.command_requested)
         self._replace_workspace(workspace)
         self.engine_label.setText("NATIVE QT / VERIFIED FIELD PROVENANCE")
         self.instrument_bar.setText(
@@ -2123,7 +2476,7 @@ class AjaxDesktopWindow(QMainWindow):
 
     def _mount_data_quality(self, model: object) -> None:
         workspace = DataQualityWorkspace(model)
-        workspace.command_requested.connect(self.execute_text)
+        self._connect_tab_command(workspace.command_requested)
         self._replace_workspace(workspace)
         self.engine_label.setText("NATIVE QT / PROVIDER + CACHE DIAGNOSTICS")
         self.instrument_bar.setText(
@@ -2136,7 +2489,7 @@ class AjaxDesktopWindow(QMainWindow):
 
     def _mount_watchlist(self, model: object) -> None:
         workspace = WatchlistWorkspace(model)
-        workspace.command_requested.connect(self.execute_text)
+        self._connect_tab_command(workspace.command_requested)
         self._replace_workspace(workspace)
         self.engine_label.setText("NATIVE QT / EDITABLE WATCHLIST")
         self.instrument_bar.setText(
@@ -2147,7 +2500,7 @@ class AjaxDesktopWindow(QMainWindow):
 
     def _mount_portfolio(self, model: object) -> None:
         workspace = PortfolioWorkspace(model)
-        workspace.command_requested.connect(self.execute_text)
+        self._connect_tab_command(workspace.command_requested)
         self._replace_workspace(workspace)
         self.engine_label.setText("NATIVE QT / PORTFOLIO ANALYTICS")
         self.instrument_bar.setText(
@@ -2159,7 +2512,7 @@ class AjaxDesktopWindow(QMainWindow):
 
     def _mount_alerts(self, model: object) -> None:
         workspace = AlertsWorkspace(model)
-        workspace.command_requested.connect(self.execute_text)
+        self._connect_tab_command(workspace.command_requested)
         self._replace_workspace(workspace)
         triggered = sum(1 for item in model.evaluations if item.triggered)
         self.engine_label.setText("NATIVE QT / BACKGROUND ALERT ENGINE")
@@ -2172,7 +2525,7 @@ class AjaxDesktopWindow(QMainWindow):
 
     def _mount_event_calendar(self, model: object) -> None:
         workspace = EventCalendarWorkspace(model)
-        workspace.command_requested.connect(self.execute_text)
+        self._connect_tab_command(workspace.command_requested)
         self._replace_workspace(workspace)
         self.engine_label.setText("NATIVE QT / CORPORATE EVENT CALENDAR")
         self.instrument_bar.setText(
@@ -2184,7 +2537,7 @@ class AjaxDesktopWindow(QMainWindow):
 
     def _mount_updates(self, model: object) -> None:
         workspace = UpdateWorkspace(model)
-        workspace.command_requested.connect(self.execute_text)
+        self._connect_tab_command(workspace.command_requested)
         workspace.update_requested.connect(self._download_update)
         self._replace_workspace(workspace)
         self.engine_label.setText("SIGNED RELEASE MANAGER / ED25519 + SHA-256")
@@ -2223,7 +2576,7 @@ class AjaxDesktopWindow(QMainWindow):
 
     def _mount_diagnostics(self, model: object) -> None:
         workspace = DiagnosticsWorkspace(model)
-        workspace.command_requested.connect(self.execute_text)
+        self._connect_tab_command(workspace.command_requested)
         self._replace_workspace(workspace)
         self.engine_label.setText("LOCAL DIAGNOSTICS / SANITIZED SUPPORT")
         self.instrument_bar.setText(
@@ -2246,11 +2599,22 @@ class AjaxDesktopWindow(QMainWindow):
         self.popout_button.setEnabled(False)
 
     def _doom_status_changed(self, workspace: DoomWorkspace, message: str) -> None:
-        if self.stack.currentWidget() is not workspace:
+        state = next(
+            (
+                candidate
+                for candidate in self._terminal_tabs.values()
+                if candidate.stack.currentWidget() is workspace
+            ),
+            None,
+        )
+        if state is None:
             return
-        self.statusBar().showMessage(message, 8_000)
-        self.popout_button.setEnabled(workspace.can_pop_out)
-        self.popout_button.setText("DOCK" if "POPPED OUT" in message else "POP OUT")
+        state.popout_enabled = workspace.can_pop_out
+        state.popout_text = "DOCK" if "POPPED OUT" in message else "POP OUT"
+        if state is self._active_terminal_tab:
+            self.statusBar().showMessage(message, 8_000)
+            self.popout_button.setEnabled(state.popout_enabled)
+            self.popout_button.setText(state.popout_text)
         if "READY" in message or "ERROR" in message:
             self.workspace_ready.emit()
 
@@ -2264,7 +2628,7 @@ class AjaxDesktopWindow(QMainWindow):
             history,
             geometry,
         )
-        workspace.command_requested.connect(self.execute_text)
+        self._connect_tab_command(workspace.command_requested)
         workspace.workspace_selected.connect(self._restore_saved_workspace)
         self._replace_workspace(workspace)
         self.engine_label.setText("NATIVE QT / PERSISTENT WORKSPACES")
@@ -2287,9 +2651,12 @@ class AjaxDesktopWindow(QMainWindow):
         self.execute_text(snapshot.active_command, record_history=False)
 
     def _mount_ovdv(self, model: object) -> None:
+        tab_stack = self.stack
         workspace = VolatilitySurfaceWorkspace(model)
         workspace.title.hide()
-        workspace.refresh_requested.connect(lambda symbol: self.execute_text(f"OVDV {symbol}"))
+        workspace.refresh_requested.connect(
+            lambda symbol, target=tab_stack: self._execute_for_stack(target, f"OVDV {symbol}")
+        )
         self._replace_workspace(workspace)
         self.engine_label.setText("PYVISTA 0.49 / VTK 9.7 / NATIVE INTERACTOR")
         self.instrument_bar.setText(
@@ -2304,7 +2671,7 @@ class AjaxDesktopWindow(QMainWindow):
         if not isinstance(model, OptionsDesktopLoad):
             raise TypeError("Options loader returned an invalid result")
         workspace = OptionsDesktopWorkspace(model)
-        workspace.command_requested.connect(self.execute_text)
+        self._connect_tab_command(workspace.command_requested)
         self._replace_workspace(workspace)
         self.engine_label.setText("NATIVE QT / LISTED OPTIONS")
         chain = model.chain
@@ -2319,7 +2686,7 @@ class AjaxDesktopWindow(QMainWindow):
 
     def _mount_description(self, model: object) -> None:
         workspace = SecurityDescriptionWorkspace(model)
-        workspace.command_requested.connect(self.execute_text)
+        self._connect_tab_command(workspace.command_requested)
         if self._pending_methodology_symbol == model.quote.symbol and hasattr(workspace, "rate_tabs"):
             workspace.rate_tabs.setCurrentIndex(1)
             self._pending_methodology_symbol = None
@@ -2331,7 +2698,7 @@ class AjaxDesktopWindow(QMainWindow):
 
     def _mount_financial_analysis(self, model: object) -> None:
         workspace = FinancialAnalysisWorkspace(model)
-        workspace.command_requested.connect(self.execute_text)
+        self._connect_tab_command(workspace.command_requested)
         self._replace_workspace(workspace)
         self.engine_label.setText("NATIVE QT FINANCIAL ANALYSIS")
         self.instrument_bar.setText(
@@ -2343,7 +2710,7 @@ class AjaxDesktopWindow(QMainWindow):
 
     def _mount_financial_statement(self, model: object) -> None:
         workspace = FinancialStatementsWorkspace(model)
-        workspace.command_requested.connect(self.execute_text)
+        self._connect_tab_command(workspace.command_requested)
         self._replace_workspace(workspace)
         self.engine_label.setText("NATIVE QT FINANCIAL STATEMENTS")
         self.instrument_bar.setText(
@@ -2357,7 +2724,7 @@ class AjaxDesktopWindow(QMainWindow):
         if not isinstance(loaded, NewsLoad):
             raise TypeError("News loader returned an invalid result")
         workspace = NewsDesktopWorkspace(loaded)
-        workspace.command_requested.connect(self.execute_text)
+        self._connect_tab_command(workspace.command_requested)
         self._replace_workspace(workspace)
         self.engine_label.setText("NATIVE QT / VERIFIED NEWS SOURCES")
         topic = loaded.topic or "TOP STORIES"
@@ -2398,7 +2765,7 @@ class AjaxDesktopWindow(QMainWindow):
             workspace = ScreenerWorkspace(loaded.model)
         else:
             raise TypeError(f"Unsupported research workspace: {active}")
-        workspace.command_requested.connect(self.execute_text)
+        self._connect_tab_command(workspace.command_requested)
         self._replace_workspace(workspace)
         self.engine_label.setText(f"NATIVE QT / {active} STRUCTURED DATA")
         if loaded.quote is not None:
@@ -2499,7 +2866,7 @@ class AjaxDesktopWindow(QMainWindow):
         security_type = stored_type or (str(registered.asset_class) if registered is not None else "EQUITY")
         currency = registered.currency if registered is not None else ""
         menu = _SecurityFunctionMenu(symbol, name, security_type, currency)
-        menu.command_requested.connect(self.execute_text)
+        self._connect_tab_command(menu.command_requested)
         self._replace_workspace(menu)
         self.engine_label.setText(f"FUNCTION DIRECTORY / {security_type}")
         self.instrument_bar.setText(
@@ -2774,6 +3141,12 @@ class AjaxDesktopWindow(QMainWindow):
             f"VOL {volume}"
         )
 
+    def _update_price_instrument_for_stack(self, stack: QStackedWidget, model: object) -> None:
+        state = self._terminal_tabs.get(stack)
+        if state is None:
+            return
+        self._run_in_terminal_tab(state, lambda: self._update_price_instrument(model))
+
     def _update_clock(self) -> None:
         local = datetime.now().astimezone()
         utc = datetime.now(timezone.utc)
@@ -2891,9 +3264,14 @@ class AjaxDesktopWindow(QMainWindow):
         if social_worker is not None and social_worker.isRunning():
             social_worker.requestInterruption()
             social_worker.wait(2_000)
-        current = self.stack.currentWidget()
-        if current is not None:
-            self._dispose_workspace(current)
+        for window in tuple(self._secondary_windows):
+            window.close()
+        for state in tuple(self._terminal_tabs.values()):
+            state.load_serial += 1
+            while state.stack.count():
+                widget = state.stack.widget(0)
+                state.stack.removeWidget(widget)
+                self._dispose_workspace(widget)
         super().closeEvent(event)
 
 
