@@ -4,6 +4,24 @@ This inventory keeps every THRIVEBERG command attached to an explicit Bloomberg-
 visual family. `tests/test_visual_command_inventory.py` fails when a new command
 is introduced without a reviewed screen family.
 
+## 2026-10-03 Global Overview Pass
+
+- `WALL` creates one frameless 2 x 2 market wall on the selected display instead
+  of scattering four independent operating-system windows across the desktop.
+- The default desk combines an intraday `EURUSD` price chart, `WEI` world equity
+  breadth, `GOVT` sovereign benchmarks and `NEWS MARKETS` world headlines. Each
+  pane runs the existing production workspace and retains its provider and data-
+  quality labels.
+- Compact panes preserve the Bloomberg-style function and instrument bands while
+  removing duplicated application chrome, command bars and footers.
+- Double-clicking a pane header expands that function to the full wall; a second
+  double-click restores all four quadrants without reloading the other views.
+- The selected display, automatic startup and four commands are persisted per
+  signed-in Windows profile. Invalid recursive commands are replaced with the
+  reviewed defaults.
+- Visual validation covered the complete 1920 x 1080 wall with live public data;
+  all labels, controls and tables remained readable with no overlapping panels.
+
 ## 2026-10-03 Tabbed Workspace Pass
 
 - `TERMINAL` now contains a compact document-tab strip. Every tab retains its

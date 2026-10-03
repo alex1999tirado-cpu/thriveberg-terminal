@@ -20,6 +20,8 @@ from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
     QButtonGroup,
+    QCheckBox,
+    QComboBox,
     QDialog,
     QFrame,
     QGridLayout,
@@ -191,6 +193,35 @@ class _WorkspaceLoadContext:
     serial: int
     engine: str
     mount: Callable[[object], None]
+
+
+_GLOBAL_OVERVIEW_PANELS = (
+    ("FX / EURUSD INTRADAY", "GP EURUSD 5D 15M"),
+    ("WORLD EQUITIES", "WEI"),
+    ("SOVEREIGN RATES / GLOBAL 10Y", "GOVT"),
+    ("WORLD MARKET NEWS", "NEWS MARKETS"),
+)
+_GLOBAL_OVERVIEW_CHOICES = (
+    ("GP EURUSD 5D 15M", "GP USDJPY 5D 15M", "FX"),
+    ("WEI", "MARKETS", "MAP GDP"),
+    ("GOVT", "CURVE USD", "GOVT US", "GOVT DE"),
+    ("NEWS MARKETS", "NEWS ECONOMY", "NEWS CENTRAL BANKS", "EVT ALL 7 1"),
+)
+_GLOBAL_OVERVIEW_FORBIDDEN = ("WALL", "LOGOUT", "SIGN OUT", "SIGNOUT", "SOCIAL", "TAB")
+
+
+def _global_overview_commands(settings: QSettings) -> tuple[str, str, str, str]:
+    stored = settings.value("overview/commands", []) or []
+    if isinstance(stored, str):
+        stored = [stored]
+    commands: list[str] = []
+    for index, (_, default) in enumerate(_GLOBAL_OVERVIEW_PANELS):
+        value = str(stored[index] if index < len(stored) else default)
+        clean = " ".join(value.strip().upper().split())
+        if not clean or clean.startswith(_GLOBAL_OVERVIEW_FORBIDDEN):
+            clean = default
+        commands.append(clean)
+    return tuple(commands)  # type: ignore[return-value]
 
 
 def resolve_desktop_command(raw: str, current_symbol: str = "") -> DesktopRoute:
@@ -522,19 +553,30 @@ def _security_function_groups(
 
 
 class _WindowChrome(QFrame):
-    def __init__(self, owner: QMainWindow) -> None:
+    compact_activated = Signal()
+
+    def __init__(
+        self,
+        owner: QMainWindow,
+        *,
+        title: str = "THRIVEBERG TERMINAL",
+        compact: bool = False,
+    ) -> None:
         super().__init__()
         self.owner = owner
+        self.compact = compact
         self._drag_position: QPoint | None = None
         self.setObjectName("windowChrome")
-        self.setFixedHeight(32)
+        self.setFixedHeight(26 if compact else 32)
         row = QHBoxLayout(self)
-        row.setContentsMargins(6, 0, 0, 0)
+        row.setContentsMargins(8, 0, 0, 0)
         row.setSpacing(0)
-        title = QLabel("THRIVEBERG TERMINAL")
-        title.setObjectName("windowTitle")
-        row.addWidget(title)
+        self.title = QLabel(title)
+        self.title.setObjectName("windowTitle")
+        row.addWidget(self.title)
         row.addStretch(1)
+        if compact:
+            return
         row.addWidget(
             self._control(QStyle.StandardPixmap.SP_TitleBarMinButton, owner.showMinimized, "Minimize")
         )
@@ -574,6 +616,8 @@ class _WindowChrome(QFrame):
         self.maximize_button.setIcon(self.owner.style().standardIcon(icon))
 
     def mousePressEvent(self, event) -> None:  # noqa: N802 - Qt callback
+        if self.compact:
+            return super().mousePressEvent(event)
         if event.button() == Qt.MouseButton.LeftButton:
             self._drag_position = event.globalPosition().toPoint() - self.owner.frameGeometry().topLeft()
         super().mousePressEvent(event)
@@ -593,7 +637,10 @@ class _WindowChrome(QFrame):
 
     def mouseDoubleClickEvent(self, event) -> None:  # noqa: N802 - Qt callback
         if event.button() == Qt.MouseButton.LeftButton:
-            self._toggle_maximize()
+            if self.compact:
+                self.compact_activated.emit()
+            else:
+                self._toggle_maximize()
         super().mouseDoubleClickEvent(event)
 
 
@@ -685,6 +732,117 @@ class _DataConnectionsDialog(QDialog):
         self.accept()
 
 
+class GlobalOverviewSettingsDialog(QDialog):
+    def __init__(self, settings: QSettings, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.settings = settings
+        self.setWindowTitle("Global Overview")
+        self.setWindowIcon(thriveberg_icon())
+        self.setModal(True)
+        self.setMinimumWidth(720)
+        self.setStyleSheet(qt_stylesheet())
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(22, 18, 22, 18)
+        layout.setSpacing(10)
+        heading = QLabel("GLOBAL OVERVIEW / MULTI-MONITOR WALL")
+        heading.setObjectName("dialogTitle")
+        layout.addWidget(heading)
+
+        self.enabled = QCheckBox("OPEN AUTOMATICALLY AFTER SIGN-IN")
+        self.enabled.setChecked(settings.value("overview/enabled", True, type=bool))
+        layout.addWidget(self.enabled)
+
+        screen_row = QHBoxLayout()
+        screen_row.addWidget(QLabel("TARGET DISPLAY"))
+        self.screen = QComboBox()
+        selected_screen = str(settings.value("overview/screen_name", "") or "")
+        for index, screen in enumerate(QApplication.screens()):
+            geometry = screen.availableGeometry()
+            label = f"{index + 1}) {screen.name()}  {geometry.width()}x{geometry.height()}"
+            self.screen.addItem(label, screen.name())
+            if screen.name() == selected_screen:
+                self.screen.setCurrentIndex(index)
+        if not selected_screen and self.screen.count() > 1:
+            primary = QApplication.primaryScreen()
+            secondary = next(
+                (index for index, candidate in enumerate(QApplication.screens()) if candidate is not primary),
+                1,
+            )
+            self.screen.setCurrentIndex(secondary)
+        screen_row.addWidget(self.screen, 1)
+        layout.addLayout(screen_row)
+
+        grid = QGridLayout()
+        grid.setHorizontalSpacing(12)
+        grid.setVerticalSpacing(8)
+        commands = _global_overview_commands(settings)
+        self.command_boxes: list[QComboBox] = []
+        positions = ("TOP LEFT", "TOP RIGHT", "BOTTOM LEFT", "BOTTOM RIGHT")
+        for index, ((title, _default), choices, command) in enumerate(
+            zip(_GLOBAL_OVERVIEW_PANELS, _GLOBAL_OVERVIEW_CHOICES, commands, strict=True)
+        ):
+            label = QLabel(f"{positions[index]}  /  {title}")
+            label.setStyleSheet(f"color:{AJAX_TEXT};font-weight:bold")
+            box = QComboBox()
+            box.setEditable(True)
+            box.addItems(choices)
+            if box.findText(command) < 0:
+                box.addItem(command)
+            box.setCurrentText(command)
+            box.setMinimumContentsLength(24)
+            self.command_boxes.append(box)
+            row, column = divmod(index, 2)
+            cell = QVBoxLayout()
+            cell.setSpacing(3)
+            cell.addWidget(label)
+            cell.addWidget(box)
+            grid.addLayout(cell, row, column)
+        layout.addLayout(grid)
+
+        note = QLabel(
+            "THE WALL USES THE SELECTED DISPLAY AS A 2x2 MARKET GRID. "
+            "DOUBLE-CLICK A PANEL HEADER TO EXPAND OR RESTORE IT."
+        )
+        note.setWordWrap(True)
+        note.setStyleSheet(f"color:{AJAX_MUTED}")
+        layout.addWidget(note)
+
+        actions = QHBoxLayout()
+        reset = QPushButton("RESTORE GLOBAL DEFAULTS")
+        reset.setObjectName("menuButton")
+        reset.clicked.connect(self._restore_defaults)
+        cancel = QPushButton("CANCEL")
+        cancel.setObjectName("menuButton")
+        cancel.clicked.connect(self.reject)
+        save = QPushButton("SAVE & OPEN")
+        save.setObjectName("amberButton")
+        save.clicked.connect(self.accept)
+        actions.addWidget(reset)
+        actions.addStretch(1)
+        actions.addWidget(cancel)
+        actions.addWidget(save)
+        layout.addLayout(actions)
+
+    def configuration(self) -> tuple[bool, str, tuple[str, str, str, str]]:
+        commands = []
+        for box, (_, default) in zip(self.command_boxes, _GLOBAL_OVERVIEW_PANELS, strict=True):
+            clean = " ".join(box.currentText().strip().upper().split())
+            if not clean or clean.startswith(_GLOBAL_OVERVIEW_FORBIDDEN):
+                clean = default
+            commands.append(clean)
+        return (
+            self.enabled.isChecked(),
+            str(self.screen.currentData() or ""),
+            tuple(commands),  # type: ignore[arg-type]
+        )
+
+    def _restore_defaults(self) -> None:
+        self.enabled.setChecked(True)
+        for box, (_, command) in zip(self.command_boxes, _GLOBAL_OVERVIEW_PANELS, strict=True):
+            box.setCurrentText(command)
+
+
 class AjaxDesktopWindow(QMainWindow):
     """Native desktop shell for interactive chart workspaces.
 
@@ -694,12 +852,28 @@ class AjaxDesktopWindow(QMainWindow):
 
     workspace_ready = Signal()
 
-    def __init__(self, *, require_login: bool = True, settings: QSettings | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        require_login: bool = True,
+        settings: QSettings | None = None,
+        compact_mode: bool = False,
+        compact_title: str = "",
+    ) -> None:
         super().__init__()
+        self._compact_mode = compact_mode
+        self._compact_title = compact_title or "MARKET PANEL"
         self.setWindowTitle("THRIVEBERG Terminal")
         self.setWindowIcon(thriveberg_icon())
-        self.setWindowFlags(Qt.WindowType.Window | Qt.WindowType.FramelessWindowHint)
-        if require_login:
+        self.setWindowFlags(
+            Qt.WindowType.Widget
+            if compact_mode
+            else Qt.WindowType.Window | Qt.WindowType.FramelessWindowHint
+        )
+        if compact_mode:
+            self.setMinimumSize(360, 260)
+            self.resize(900, 480)
+        elif require_login:
             self.setMinimumSize(900, 600)
             self.setMaximumSize(1000, 660)
             self.resize(1000, 660)
@@ -716,7 +890,7 @@ class AjaxDesktopWindow(QMainWindow):
         self.workspace_store = WorkspaceStore()
         self._require_login = require_login
         self._authenticated = not require_login
-        self._session_persistence_enabled = require_login
+        self._session_persistence_enabled = require_login and not compact_mode
         self._previous_clean_shutdown = bool(
             self.settings.value("session/clean_shutdown", True, type=bool)
         )
@@ -765,12 +939,18 @@ class AjaxDesktopWindow(QMainWindow):
         self._terminal_tabs: dict[QStackedWidget, _TerminalTabState] = {}
         self._active_terminal_tab: _TerminalTabState | None = None
         self._secondary_windows: list[AjaxDesktopWindow] = []
+        self._global_overview_window: GlobalOverviewWindow | None = None
+        self._global_overview_opened_once = False
 
         host = QWidget()
         host_layout = QVBoxLayout(host)
         host_layout.setContentsMargins(0, 0, 0, 0)
         host_layout.setSpacing(0)
-        self.window_chrome = _WindowChrome(self)
+        self.window_chrome = _WindowChrome(
+            self,
+            title=self._compact_title if compact_mode else "THRIVEBERG TERMINAL",
+            compact=compact_mode,
+        )
         host_layout.addWidget(self.window_chrome)
 
         self.lifecycle = QStackedWidget()
@@ -795,6 +975,9 @@ class AjaxDesktopWindow(QMainWindow):
         self.lifecycle.addWidget(self.workspace_tabs)
         host_layout.addWidget(self.lifecycle, 1)
         self.setCentralWidget(host)
+
+        if compact_mode:
+            self._configure_compact_panel()
 
         self._workspace_shortcuts: list[QShortcut] = []
         for sequence, callback in (
@@ -885,8 +1068,11 @@ class AjaxDesktopWindow(QMainWindow):
         layout = QVBoxLayout(root)
         layout.setContentsMargins(9, 6, 9, 6)
         layout.setSpacing(3)
-        layout.addWidget(self._system_bar())
-        layout.addWidget(self._menu_bar())
+        self.terminal_layout = layout
+        self.system_bar = self._system_bar()
+        self.menu_frame = self._menu_bar()
+        layout.addWidget(self.system_bar)
+        layout.addWidget(self.menu_frame)
         self.function_bar = QLabel()
         self.function_bar.setObjectName("functionBar")
         self.function_bar.setTextFormat(Qt.TextFormat.RichText)
@@ -898,7 +1084,9 @@ class AjaxDesktopWindow(QMainWindow):
         self.instrument_bar.setObjectName("instrumentBar")
         layout.addWidget(self.instrument_bar)
 
-        command_row = QHBoxLayout()
+        self.command_row_widget = QWidget()
+        command_row = QHBoxLayout(self.command_row_widget)
+        command_row.setContentsMargins(0, 0, 0, 0)
         command_row.setSpacing(6)
         prompt = QLabel(">")
         prompt.setStyleSheet(f"color:{AJAX_AMBER};font-weight:bold")
@@ -909,7 +1097,7 @@ class AjaxDesktopWindow(QMainWindow):
         self.command.textChanged.connect(self._command_text_changed)
         self.command.installEventFilter(self)
         command_row.addWidget(self.command, 1)
-        layout.addLayout(command_row)
+        layout.addWidget(self.command_row_widget)
         self.suggestion_panel = self._build_suggestion_panel()
         layout.addWidget(self.suggestion_panel)
 
@@ -950,6 +1138,21 @@ class AjaxDesktopWindow(QMainWindow):
         self.footer.setObjectName("footerBar")
         layout.addWidget(self.footer)
         return root
+
+    def _configure_compact_panel(self) -> None:
+        self.workspace_tabs.tabBar().hide()
+        self.system_bar.hide()
+        self.menu_frame.hide()
+        self.command_row_widget.hide()
+        self.suggestion_panel.hide()
+        self.footer.hide()
+        self.document_tabs.tabBar().hide()
+        corner = self.document_tabs.cornerWidget(Qt.Corner.TopRightCorner)
+        if corner is not None:
+            corner.hide()
+        self.terminal_layout.setContentsMargins(3, 3, 3, 3)
+        self.terminal_layout.setSpacing(2)
+        self.statusBar().hide()
 
     def _build_suggestion_panel(self) -> QFrame:
         panel = QFrame()
@@ -1436,6 +1639,8 @@ class AjaxDesktopWindow(QMainWindow):
             QTimer.singleShot(0, lambda: self.execute_text(self._restored_session_command))
         else:
             QTimer.singleShot(0, lambda: self.execute_text("HOME"))
+        if self._session_persistence_enabled:
+            QTimer.singleShot(900, self._open_startup_global_overview)
 
     def _restore_session_tabs(self) -> None:
         commands = self._restored_tab_commands or (self._restored_session_command or "HOME",)
@@ -1489,6 +1694,7 @@ class AjaxDesktopWindow(QMainWindow):
         self.auth_password.clear()
         self.auth_confirm.clear()
         self.social_service.session = None
+        self.close_global_overview()
         self._set_auth_mode("signin")
         self._show_login()
         if provider is not None and session is not None:
@@ -1704,6 +1910,87 @@ class AjaxDesktopWindow(QMainWindow):
         if window in self._secondary_windows:
             self._secondary_windows.remove(window)
 
+    @Slot()
+    def configure_global_overview(self) -> None:
+        if self._compact_mode:
+            return
+        dialog = GlobalOverviewSettingsDialog(self.settings, self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        enabled, screen_name, commands = dialog.configuration()
+        self.settings.setValue("overview/enabled", enabled)
+        self.settings.setValue("overview/screen_name", screen_name)
+        self.settings.setValue("overview/commands", list(commands))
+        self.settings.sync()
+        self.close_global_overview()
+        if enabled:
+            self.open_global_overview(force=True)
+        else:
+            self.statusBar().showMessage("GLOBAL OVERVIEW DISABLED", 6_000)
+
+    @Slot()
+    def open_global_overview(self, *, force: bool = False) -> None:
+        if self._compact_mode:
+            return
+        existing = self._global_overview_window
+        if existing is not None:
+            existing.show()
+            existing.raise_()
+            existing.activateWindow()
+            return
+        target = self._global_overview_target_screen(allow_current=force)
+        if target is None:
+            self.statusBar().showMessage(
+                "GLOBAL OVERVIEW REQUIRES A SECOND DISPLAY; USE WALL CONFIG TO CHOOSE ONE",
+                8_000,
+            )
+            return
+        wall = GlobalOverviewWindow(_global_overview_commands(self.settings), target)
+        self._global_overview_window = wall
+        wall.destroyed.connect(
+            lambda _obj=None, active=wall: self._forget_global_overview(active)
+        )
+        wall.show_on_screen()
+        self._global_overview_opened_once = True
+        self.statusBar().showMessage(
+            f"GLOBAL OVERVIEW OPENED ON {target.name()}",
+            6_000,
+        )
+
+    @Slot()
+    def close_global_overview(self) -> None:
+        wall = self._global_overview_window
+        self._global_overview_window = None
+        if wall is not None:
+            wall.close()
+
+    def _forget_global_overview(self, wall: GlobalOverviewWindow) -> None:
+        if wall is self._global_overview_window:
+            self._global_overview_window = None
+
+    def _global_overview_target_screen(self, *, allow_current: bool = False):
+        screens = QApplication.screens()
+        if not screens:
+            return None
+        selected = str(self.settings.value("overview/screen_name", "") or "")
+        current = self.screen() or QApplication.primaryScreen()
+        named = next((screen for screen in screens if screen.name() == selected), None)
+        if named is not None and (allow_current or named is not current or len(screens) > 1):
+            return named
+        secondary = next((screen for screen in screens if screen is not current), None)
+        if secondary is not None:
+            return secondary
+        return current if allow_current else None
+
+    def _open_startup_global_overview(self) -> None:
+        if (
+            self._compact_mode
+            or self._global_overview_opened_once
+            or not self.settings.value("overview/enabled", True, type=bool)
+        ):
+            return
+        self.open_global_overview(force=False)
+
     def _execute_for_stack(self, stack: QStackedWidget, command: str) -> None:
         index = self.document_tabs.indexOf(stack)
         if index < 0:
@@ -1790,6 +2077,7 @@ class AjaxDesktopWindow(QMainWindow):
         row.addWidget(_button("EQS", lambda: self.execute_text("EQS")))
         row.addWidget(_button("EVT", lambda: self.execute_text("EVT")))
         row.addWidget(_button("MAP", lambda: self.execute_text("MAP")))
+        row.addWidget(_button("WALL", lambda: self.execute_text("WALL")))
         row.addWidget(_button("SOCIAL", lambda: self.execute_text("SOCIAL")))
         tools_button = _button("TOOLS", lambda: None)
         tools_menu = QMenu(tools_button)
@@ -1799,6 +2087,12 @@ class AjaxDesktopWindow(QMainWindow):
         tools_menu.addAction("UPD  BETA RELEASES", lambda: self.execute_text("UPD"))
         tools_menu.addAction("DIAG  SYSTEM DIAGNOSTICS", lambda: self.execute_text("DIAG"))
         tools_menu.addAction("DOOM  CLASSIC GAME", lambda: self.execute_text("DOOM"))
+        tools_menu.addSeparator()
+        tools_menu.addAction(
+            "WALL  GLOBAL OVERVIEW",
+            lambda: self.open_global_overview(force=True),
+        )
+        tools_menu.addAction("WALL CONFIG  DISPLAY LAYOUT", self.configure_global_overview)
         tools_menu.addSeparator()
         tools_menu.addAction("NEW WORKSPACE TAB    CTRL+T", self.new_terminal_tab)
         tools_menu.addAction("OPEN TAB IN WINDOW   CTRL+SHIFT+D", self.open_current_tab_window)
@@ -2013,6 +2307,36 @@ class AjaxDesktopWindow(QMainWindow):
             return
         if clean in {"TAB WINDOW", "TAB DETACH", "NEWWINDOW"}:
             self.open_current_tab_window()
+            return
+        if clean in {"WALL", "WALL OPEN", "GLOBAL OVERVIEW"}:
+            self.open_global_overview(force=True)
+            return
+        if clean in {"WALL CONFIG", "WALL SETTINGS"}:
+            self.configure_global_overview()
+            return
+        if clean == "WALL ON":
+            self.settings.setValue("overview/enabled", True)
+            self.settings.sync()
+            self.open_global_overview(force=True)
+            return
+        if clean in {"WALL CLOSE", "WALL HIDE"}:
+            self.close_global_overview()
+            return
+        if clean == "WALL OFF":
+            self.settings.setValue("overview/enabled", False)
+            self.settings.sync()
+            self.close_global_overview()
+            self.statusBar().showMessage("GLOBAL OVERVIEW AUTO-OPEN DISABLED", 6_000)
+            return
+        if clean == "WALL RESET":
+            self.settings.setValue("overview/enabled", True)
+            self.settings.setValue(
+                "overview/commands",
+                [command for _title, command in _GLOBAL_OVERVIEW_PANELS],
+            )
+            self.settings.sync()
+            self.close_global_overview()
+            self.open_global_overview(force=True)
             return
         route = resolve_desktop_command(raw, self.current_symbol)
         if route.kind == "social":
@@ -3264,6 +3588,7 @@ class AjaxDesktopWindow(QMainWindow):
         if social_worker is not None and social_worker.isRunning():
             social_worker.requestInterruption()
             social_worker.wait(2_000)
+        self.close_global_overview()
         for window in tuple(self._secondary_windows):
             window.close()
         for state in tuple(self._terminal_tabs.values()):
@@ -3272,6 +3597,83 @@ class AjaxDesktopWindow(QMainWindow):
                 widget = state.stack.widget(0)
                 state.stack.removeWidget(widget)
                 self._dispose_workspace(widget)
+        super().closeEvent(event)
+
+
+class GlobalOverviewWindow(QMainWindow):
+    def __init__(self, commands: tuple[str, str, str, str], target_screen) -> None:
+        super().__init__()
+        self.target_screen = target_screen
+        self.commands = commands
+        self.panels: list[AjaxDesktopWindow] = []
+        self._expanded_panel: AjaxDesktopWindow | None = None
+        self.setWindowTitle("THRIVEBERG Global Overview")
+        self.setWindowIcon(thriveberg_icon())
+        self.setWindowFlags(Qt.WindowType.Window | Qt.WindowType.FramelessWindowHint)
+        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
+        self.setStyleSheet(qt_stylesheet())
+
+        host = QFrame()
+        host.setObjectName("globalOverviewWall")
+        host.setStyleSheet("#globalOverviewWall{background:#050606}")
+        self.grid = QGridLayout(host)
+        self.grid.setContentsMargins(3, 3, 3, 3)
+        self.grid.setHorizontalSpacing(4)
+        self.grid.setVerticalSpacing(4)
+        self.grid.setColumnStretch(0, 1)
+        self.grid.setColumnStretch(1, 1)
+        self.grid.setRowStretch(0, 1)
+        self.grid.setRowStretch(1, 1)
+        self.setCentralWidget(host)
+
+        for index, ((title, _default), command) in enumerate(
+            zip(_GLOBAL_OVERVIEW_PANELS, commands, strict=True)
+        ):
+            panel = AjaxDesktopWindow(
+                require_login=False,
+                compact_mode=True,
+                compact_title=f"{title}  |  {command}",
+            )
+            panel.window_chrome.compact_activated.connect(
+                lambda active=panel: self._toggle_panel(active)
+            )
+            self.panels.append(panel)
+            row, column = divmod(index, 2)
+            self.grid.addWidget(panel, row, column)
+            QTimer.singleShot(0, lambda active=panel, value=command: active.start(value))
+
+    def show_on_screen(self) -> None:
+        geometry = self.target_screen.availableGeometry()
+        self.showNormal()
+        self.setGeometry(geometry)
+        self.show()
+        self.raise_()
+
+    def _toggle_panel(self, panel: AjaxDesktopWindow) -> None:
+        if panel not in self.panels:
+            return
+        if self._expanded_panel is panel:
+            self._restore_grid()
+            return
+        for candidate in self.panels:
+            self.grid.removeWidget(candidate)
+            candidate.hide()
+        self.grid.addWidget(panel, 0, 0, 2, 2)
+        panel.show()
+        self._expanded_panel = panel
+
+    def _restore_grid(self) -> None:
+        for index, panel in enumerate(self.panels):
+            self.grid.removeWidget(panel)
+            row, column = divmod(index, 2)
+            self.grid.addWidget(panel, row, column)
+            panel.show()
+        self._expanded_panel = None
+
+    def closeEvent(self, event) -> None:  # noqa: N802 - Qt callback
+        for panel in tuple(self.panels):
+            panel.close()
+        self.panels.clear()
         super().closeEvent(event)
 
 

@@ -12,6 +12,17 @@ It does not use Bloomberg branding, logos, proprietary typefaces, or protected U
 
 ## Product tour
 
+### Automatic global market wall
+
+![THRIVEBERG Global Overview market wall](screenshots/global-overview-wall.png)
+
+`WALL` turns the selected display into a dense four-pane global overview. The
+default layout combines an intraday `EURUSD` chart, world equities, global
+sovereign rates and the market-news wire, so price action, rates and headlines
+remain visible together. Each pane is a real THRIVEBERG workspace rather than a
+static dashboard: double-click its header to expand it across the display and
+double-click again to restore the 2 x 2 grid.
+
 ### Tabbed and multi-monitor workspaces
 
 ![THRIVEBERG independent workspace tabs](screenshots/workspace-tabs.png)
@@ -144,6 +155,7 @@ its provider and quality state; unavailable observations remain unavailable.
 
 - Textual/Rich terminal interface with dense market panels.
 - Universal command palette.
+- Configurable `WALL` global overview with four independent live workspaces, automatic secondary-display startup and single-pane expansion.
 - Live workspace tabs with independent instrument context, history and retained views; any tab can open as a complete second terminal window for multi-monitor desks.
 - Market monitor home screen.
 - Central instrument registry: 27 global indices, 45 G10 FX crosses, 28 sovereign yields, 6 credit benchmarks, 8 corporate cash bonds, and 17 major commodities.
@@ -249,7 +261,7 @@ may continue to see a Microsoft SmartScreen warning.
   release metadata.
 - Supabase access is constrained by Auth and row-level security. The bundled
   key is publishable and has no administrative privileges.
-- CI runs 297 tests, `pip-audit`, `detect-secrets`, and Bandit for every change.
+- CI runs 305 tests, `pip-audit`, `detect-secrets`, and Bandit for every change.
 
 See [SECURITY.md](SECURITY.md) for vulnerability reporting and
 [the latest audit](docs/SECURITY_AUDIT.md) for verified results and residual
@@ -402,6 +414,11 @@ TAB NEW
 TAB NEW AAPL DES
 TAB CLOSE
 TAB WINDOW
+WALL
+WALL CONFIG
+WALL ON
+WALL OFF
+WALL RESET
 ```
 
 Workspace tabs are also available from the `+` control. `Ctrl+T` opens a tab,
@@ -409,6 +426,13 @@ Workspace tabs are also available from the `+` control. `Ctrl+T` opens a tab,
 opens the active workspace as an independent terminal window on the next display.
 Double-clicking a tab performs the same multi-window action. Open tab commands
 and the active tab are restored with the next signed-in session.
+
+`WALL` opens the global market overview. On a multi-monitor desk it automatically
+uses the selected secondary display at sign-in; a one-monitor setup keeps the
+overview closed until it is opened manually. `WALL CONFIG` or `TOOLS > WALL
+CONFIG` selects the display and assigns any valid THRIVEBERG command to each
+quadrant. `WALL ON` and `WALL OFF` control automatic startup, while `WALL RESET`
+restores the `EURUSD`, `WEI`, `GOVT` and `NEWS MARKETS` default composition.
 
 `NEWS` opens the top-stories wire. Use `NEWS <ticker>` for instrument headlines or
 `NEWS MARKETS`, `NEWS ECONOMY`, `NEWS CENTRAL BANKS`, `NEWS COMPANIES`, `NEWS TECH`
