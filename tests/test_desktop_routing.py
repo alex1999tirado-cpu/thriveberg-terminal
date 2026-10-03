@@ -73,6 +73,16 @@ def test_macro_map_routes_to_native_workspace() -> None:
     assert route.raw == "MAP CPI SPAIN"
 
 
+def test_government_commands_route_to_native_world_bond_workspace() -> None:
+    world = resolve_desktop_command("GOVT")
+    bloomberg_alias = resolve_desktop_command("WB")
+    country = resolve_desktop_command("GOVT ES")
+
+    assert (world.kind, world.target) == ("government", "WORLD")
+    assert (bloomberg_alias.kind, bloomberg_alias.target) == ("government", "WORLD")
+    assert (country.kind, country.target) == ("government", "ES")
+
+
 def test_description_and_financials_route_to_native_workspaces() -> None:
     description = resolve_desktop_command("KRI.AT DES", "AAPL")
     equity = resolve_desktop_command("KRI.AT EQUITY", "AAPL")

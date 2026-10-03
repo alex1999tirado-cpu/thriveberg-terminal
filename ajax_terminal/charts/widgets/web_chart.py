@@ -149,9 +149,9 @@ class EChartsWidget(_TerminalWebView):
         self._channel.registerObject("terminalBridge", self._bridge)
         self.page().setWebChannel(self._channel)
 
-    def set_option(self, option: dict[str, object]) -> None:
+    def set_option(self, option: dict[str, object], *, events: bool = False) -> None:
         self.option = option
-        document = self.renderer.render(option)
+        document = self.renderer.render(option, country_events=events)
         self.load_document(document)
 
     def set_map_option(self, option: dict[str, object], geojson: dict[str, object]) -> None:

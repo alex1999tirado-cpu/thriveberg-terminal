@@ -87,6 +87,11 @@ from ajax_terminal.equity_research_desktop import (
     load_screener,
 )
 from ajax_terminal.models.quote import StatementType
+from ajax_terminal.government_desktop import (
+    GovernmentBondsLoad,
+    GovernmentBondsWorkspace,
+    load_government_bonds,
+)
 from ajax_terminal.macro_map_desktop import MacroMapLoad, MacroMapWorkspace, load_macro_map
 from ajax_terminal.news_desktop import NewsDesktopWorkspace, NewsLoad, load_news
 from ajax_terminal.options_desktop import (
@@ -261,6 +266,8 @@ def resolve_desktop_command(raw: str, current_symbol: str = "") -> DesktopRoute:
         )
     if parsed.action == CommandAction.CURVE:
         return DesktopRoute("curve", parsed.target or "USD", raw=clean)
+    if parsed.action == CommandAction.GOVERNMENT:
+        return DesktopRoute("government", parsed.target or "WORLD", raw=clean)
     if parsed.action == CommandAction.MAP:
         return DesktopRoute("macro-map", parsed.target or "WORLD", raw=clean)
     if parsed.action == CommandAction.NEWS:
@@ -2382,6 +2389,12 @@ class AjaxDesktopWindow(QMainWindow):
             )
         elif route.kind == "curve":
             self._load_workspace("APACHE ECHARTS", lambda: _load_curve(route.target), self._mount_curve)
+        elif route.kind == "government":
+            self._load_workspace(
+                "NATIVE WORLD BOND MARKETS",
+                lambda: load_government_bonds(parsed.args),
+                self._mount_government,
+            )
         elif route.kind == "macro-map":
             self._load_workspace(
                 "APACHE ECHARTS / GLOBAL MACRO",
@@ -2769,6 +2782,22 @@ class AjaxDesktopWindow(QMainWindow):
             f"{model.provider} {model.quality}"
         )
         self.popout_button.setEnabled(True)
+        QTimer.singleShot(6_000, self.workspace_ready.emit)
+
+    def _mount_government(self, model: object) -> None:
+        if not isinstance(model, GovernmentBondsLoad):
+            raise TypeError("Government bonds loader returned an invalid result")
+        workspace = GovernmentBondsWorkspace(model)
+        self._connect_tab_command(workspace.command_requested)
+        workspace.ready.connect(self.workspace_ready.emit)
+        self._replace_workspace(workspace)
+        self.engine_label.setText("APACHE ECHARTS 6.1.0 / OFFICIAL SOVEREIGN DATA")
+        available = len(model.available)
+        self.instrument_bar.setText(
+            f"GOVT   |   {model.scope}   |   {available}/{len(model.observations)} BENCHMARKS   |   "
+            "LATEST VERIFIED OBSERVATIONS"
+        )
+        self.popout_button.setEnabled(False)
         QTimer.singleShot(6_000, self.workspace_ready.emit)
 
     def _mount_macro_map(self, model: object) -> None:
@@ -3369,6 +3398,7 @@ class AjaxDesktopWindow(QMainWindow):
             "select": f"{route.target}  |  SECURITY SELECTED",
             "price": f"GP  |  {route.target}  |  PRICE CHART",
             "curve": f"CURVE  |  {route.target}  |  YIELD CURVE",
+            "government": f"GOVT  |  {route.target}  |  WORLD BOND MARKETS",
             "macro-map": f"MAP  |  GLOBAL ECONOMIC MAP  |  {route.target}",
             "news": f"NEWS  |  {route.target or 'TOP STORIES'}",
             "watchlist": "WATC  |  EDITABLE WATCHLISTS",

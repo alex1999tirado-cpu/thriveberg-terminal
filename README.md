@@ -49,6 +49,20 @@ WEI groups major indices by region, carries market status and data quality on ev
 | --- | --- |
 | ![AAPL interactive price chart](screenshots/equity-price-chart.png) | ![Official USD Treasury yield curve](screenshots/usd-yield-curve.png) |
 
+### World bond markets
+
+| Global sovereign matrix | Spain government curve |
+| --- | --- |
+| ![Global 10-year sovereign yield matrix and comparison](screenshots/government-bonds-global.png) | ![Spain government yield curve by tenor](screenshots/government-bonds-spain.png) |
+
+`GOVT` and `WB` open a native sovereign-rates workspace grouped into Americas,
+EMEA and Asia-Pacific. The matrix aligns current yield, latest observed change
+in basis points, spread to the US 10-year benchmark, one-year range, observation
+frequency and data quality with a graphical cross-market comparison. Regional
+commands such as `GOVT EMEA` narrow the universe; country commands such as
+`GOVT ES` switch to the complete registered term structure. Double-click any
+benchmark or chart point to open its one-year history in `GP`.
+
 ### Research workflow
 
 | Security description | Global corporate calendar |
@@ -261,7 +275,7 @@ may continue to see a Microsoft SmartScreen warning.
   release metadata.
 - Supabase access is constrained by Auth and row-level security. The bundled
   key is publishable and has no administrative privileges.
-- CI runs 305 tests, `pip-audit`, `detect-secrets`, and Bandit for every change.
+- CI runs 311 tests, `pip-audit`, `detect-secrets`, and Bandit for every change.
 
 See [SECURITY.md](SECURITY.md) for vulnerability reporting and
 [the latest audit](docs/SECURITY_AUDIT.md) for verified results and residual
@@ -466,8 +480,10 @@ quarters derived from reported YTD/FY totals are explicitly marked `DERIVED`.
 Currency and share values are scaled to millions while EPS remains unscaled. Mock
 or unavailable statements are never exported.
 
-`GOVT` shows the registered sovereign benchmark universe without substituting mock
-yields. `CORP` combines delayed ICE BofA index data distributed by FRED with a
+`GOVT` shows 17 provider-backed global 10-year benchmarks without substituting mock
+yields. It identifies daily and monthly observations explicitly, calculates
+latest-available UST spreads, and retains source, timestamp and methodology in
+each row's detail. `CORP` combines delayed ICE BofA index data distributed by FRED with a
 reference directory of SEC-filed cash-bond terms. Individual cash-bond prices are
 shown as `--` until a TRACE-capable market-data feed is configured; enter a clean
 price explicitly with `BOND <symbol> PRICE <price>` to calculate yield and risk.

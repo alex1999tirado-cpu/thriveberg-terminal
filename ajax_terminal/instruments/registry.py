@@ -448,6 +448,16 @@ _RATES = [
     _rate("ES10Y", "Spain Bono 10Y Yield", "^ES10Y", "ES", "EUR"),
     _rate("ES15Y", "Spain Bono 15Y Yield", "^ES15Y", "ES", "EUR"),
     _rate("ES30Y", "Spain Bono 30Y Yield", "^ES30Y", "ES", "EUR"),
+    _rate("CA10Y", "Canada Government 10Y Yield", "^CA10Y", "CA", "CAD"),
+    _rate("MX10Y", "Mexico Government 10Y Yield", "^MX10Y", "MX", "MXN"),
+    _rate("CH10Y", "Switzerland Government 10Y Yield", "^CH10Y", "CH", "CHF"),
+    _rate("SE10Y", "Sweden Government 10Y Yield", "^SE10Y", "SE", "SEK"),
+    _rate("NO10Y", "Norway Government 10Y Yield", "^NO10Y", "NO", "NOK"),
+    _rate("PL10Y", "Poland Government 10Y Yield", "^PL10Y", "PL", "PLN"),
+    _rate("KR10Y", "South Korea Government 10Y Yield", "^KR10Y", "KR", "KRW"),
+    _rate("AU10Y", "Australia Government 10Y Yield", "^AU10Y", "AU", "AUD"),
+    _rate("NZ10Y", "New Zealand Government 10Y Yield", "^NZ10Y", "NZ", "NZD"),
+    _rate("ZA10Y", "South Africa Government 10Y Yield", "^ZA10Y", "ZA", "ZAR"),
 ]
 
 _CREDIT_BENCHMARKS = [

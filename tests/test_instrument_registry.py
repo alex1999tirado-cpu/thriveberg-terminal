@@ -33,7 +33,7 @@ def test_registry_has_complete_unique_g10_matrix() -> None:
 
 def test_registry_market_coverage_counts() -> None:
     assert len(INSTRUMENT_REGISTRY.list(AssetClass.INDEX)) == 27
-    assert len(INSTRUMENT_REGISTRY.list(AssetClass.RATE)) == 29
+    assert len(INSTRUMENT_REGISTRY.list(AssetClass.RATE)) == 39
     assert len(INSTRUMENT_REGISTRY.list(AssetClass.COMMODITY)) == 17
     assert len(INSTRUMENT_REGISTRY.list(AssetClass.BOND)) == 14
     assert INSTRUMENT_REGISTRY.asset_class("INDEX") == AssetClass.INDEX
@@ -42,10 +42,10 @@ def test_registry_market_coverage_counts() -> None:
 
 
 def test_registry_centralizes_government_and_corporate_fixed_income() -> None:
-    assert len(INSTRUMENT_REGISTRY.government_benchmarks()) == 29
+    assert len(INSTRUMENT_REGISTRY.government_benchmarks()) == 39
     assert len(INSTRUMENT_REGISTRY.credit_benchmarks()) == 6
     assert len(INSTRUMENT_REGISTRY.corporate_bonds()) == 8
-    assert len(INSTRUMENT_REGISTRY.list_filter("GOVT") or []) == 29
+    assert len(INSTRUMENT_REGISTRY.list_filter("GOVT") or []) == 39
     assert len(INSTRUMENT_REGISTRY.list_filter("CORP") or []) == 14
     assert INSTRUMENT_REGISTRY.get("AAPL44").identifier == "US037833AT77"  # type: ignore[union-attr]
     assert INSTRUMENT_REGISTRY.get("037833AT7").symbol == "AAPL44"  # type: ignore[union-attr]
