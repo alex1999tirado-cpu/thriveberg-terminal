@@ -1,21 +1,21 @@
 # Security audit - 2026-10-03
 
-Scope: THRIVEBERG Terminal 0.5.0 Beta 022 source tree, packaged application and
+Scope: THRIVEBERG Terminal 0.5.0 Beta 023 source tree, packaged application and
 Windows installer.
 
 ## Results
 
-- `pytest`: 311 passed, with 21 third-party deprecation warnings.
+- `pytest`: 317 passed, with 21 third-party deprecation warnings.
 - `pip-audit`: no known vulnerable installed dependencies.
 - Bandit: no medium- or high-severity findings after hardening.
 - `detect-secrets`: no unreviewed findings. The public SHA-256 values in the
   DOOM integrity manifest are recorded as audited false positives.
-- Installer SHA-256: `AC0CC12201E9CBDEF8A3F77EB296955180C664568121FB31753BBF2B69AA80D7`.
-- Installed executable SHA-256: `C8AB88A5A1DD40A0DD9CCA7A7639BDD2F70C0722EED76E0C68E44C4A3F27F31C`.
-- Microsoft Defender custom scans: zero detections for the Beta 022 installer
+- Installer SHA-256: `C9A41174590E3F0916313A1CBEA15B271819410986A2BBE78729EEBA0CEBF800`.
+- Installed executable SHA-256: `60419004AC20E5474294A249E6D633AEC6F23F5DA5F3D7B514B69D75AB949E9D`.
+- Microsoft Defender custom scans: zero detections for the Beta 023 installer
   and installed executable.
 - Packaged and installed smoke tests: successful `DIAG` render at 1920x1080.
-  The installed build reports 0.5.0 Beta 022 from commit `41982ddee52b`, with
+  The installed build reports 0.5.0 Beta 023 from commit `bffca2329235`, with
   11 checks passed and no failures or warnings.
 - Global Overview coverage verifies persisted display/panel configuration,
   recursive-command rejection, four independent compact workspaces and
@@ -23,6 +23,10 @@ Windows installer.
 - Workspace-tab coverage verifies independent securities and live widgets,
   route ownership during background loads, session restoration, and secondary
   terminal-window cleanup for multi-monitor use.
+- Native MARKETS coverage verifies the structured 26-instrument matrix,
+  interactive daily-movers chart, selected-security drill-down, one-click news
+  preview, cross-asset breadth and responsive compact workspace. Unavailable or
+  mock observations are excluded from real-data coverage and charts.
 - World bond market coverage verifies the provider-backed 17-country matrix,
   regional filters, country term structures, chart drill-down and compact wall
   rendering without presenting unavailable observations as real data.
@@ -60,7 +64,7 @@ Windows installer.
 
 ## Residual risks
 
-- Beta 022 is not Authenticode signed, so Windows SmartScreen can still warn on
+- Beta 023 is not Authenticode signed, so Windows SmartScreen can still warn on
   the initial installer. The in-app Ed25519 trust root authenticates subsequent
   THRIVEBERG update manifests independently of GitHub transport.
 - Public market-data endpoints can be delayed, rate limited, changed, or
