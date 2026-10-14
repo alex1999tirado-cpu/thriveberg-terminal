@@ -48,7 +48,7 @@ full = [
 ]
 charts = [
   "PySide6==6.11.2",
-  "pyvista==0.49.0",
+  "pyvista==0.49.1",
   "pyvistaqt==0.12.0",
   "vtk==9.7.1",
   "scipy>=1.18,<2.0",
